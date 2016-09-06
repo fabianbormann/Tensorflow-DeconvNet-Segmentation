@@ -45,15 +45,48 @@ class FCN8_Segmentation:
         conv_5_2 = self.conv_layer(conv_5_1, 'conv_5_2')
         conv_5_3 = self.conv_layer(conv_5_2, 'conv_5_3')
 
-        fc_6 = self.fc_layer(tf.reshape(pool_2, [-1, 7 * 7 * 64]), 'fc_1')
+        pool_5 = self.pool_layer(conv_5_3)
 
+        fc_6 = self.conv_layer(pool_5, 'fc_6')
+        fc_7 = self.conv_layer(fc_6, 'fc_7')
 
-        self.prediction = self.fc_layer(fc_1, 'fc_2')
-        y_ = tf.placeholder("float", shape=[None, 10])
+        fc_6_deconv = self.deconv_layer(fc_7, 'fc6_deconv')
 
-        self.cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(self.prediction), reduction_indices=[1]))
+        unpool_5 = self.unpool_layer(fc_6_deconv)
+
+        deconv_5_3 = self.deconv_layer(unpool_5, 'deconv_5_3')
+        deconv_5_2 = self.deconv_layer(deconv_5_3, 'deconv_5_2')
+        deconv_5_1 = self.deconv_layer(deconv_5_2, 'deconv_5_1')
+
+        unpool_4 = self.unpool_layer(deconv_5_1)
+
+        deconv_4_3 = self.deconv_layer(unpool_4, 'deconv_4_3')
+        deconv_4_2 = self.deconv_layer(deconv_4_3, 'deconv_4_2')
+        deconv_4_1 = self.deconv_layer(deconv_4_2, 'deconv_4_1')        
+
+        unpool_3 = self.unpool_layer(deconv_4_1)
+
+        deconv_3_3 = self.deconv_layer(unpool_3, 'deconv_3_3')
+        deconv_3_2 = self.deconv_layer(deconv_3_3, 'deconv_3_2')
+        deconv_3_1 = self.deconv_layer(deconv_3_2, 'deconv_3_1')  
+
+        unpool_2 = self.unpool_layer(deconv_3_1)
+
+        deconv_2_2 = self.deconv_layer(unpool_2, 'deconv_2_2')
+        deconv_2_1 = self.deconv_layer(deconv_2_2, 'deconv_2_1')  
+
+        unpool_1 = self.unpool_layer(deconv_2_1)
+
+        deconv_1_2 = self.deconv_layer(unpool_1, 'deconv_1_2')
+        deconv_1_1 = self.deconv_layer(deconv_1_2, 'deconv_1_1') 
+
+        seg_score_voc = self.conv_layer(deconv_1_1, 'seg_score_voc')
+
+        ground_truth = tf.placeholder("float", shape=[224, 224])
+
+        self.cross_entropy = tf.reduce_mean(-tf.reduce_sum(ground_truth * tf.log(seg_score_voc), reduction_indices=[1]))
         self.train_step = tf.train.AdamOptimizer(1e-4).minimize(self.cross_entropy)
-        self.correct_prediction = tf.equal(tf.argmax(self.prediction, 1), tf.argmax(y_, 1))
+        self.correct_prediction = tf.equal(tf.argmax(self.prediction, 1), tf.argmax(ground_truth, 1))
         self.accuracy = tf.reduce_mean(tf.cast(self.correct_prediction, tf.float32))
 
         saver = tf.train.Saver(max_to_keep=5, keep_checkpoint_every_n_hours=1)
