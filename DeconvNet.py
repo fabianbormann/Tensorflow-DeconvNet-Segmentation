@@ -1,28 +1,23 @@
 import os
 import random
 import tensorflow as tf
-import urllib2
 import time
-import tarfile
+import subprocess
 
-class FCN8_Segmentation:
+class DeconvNet:
     def __init__(self, checkpoint_dir='./checkpoints/'):
         self.maybe_download_and_extract()
-        self.build()
+        #self.build()
 
-        self.saver = tf.train.Saver(max_to_keep=5, keep_checkpoint_every_n_hours=1)
+        #self.saver = tf.train.Saver(max_to_keep=5, keep_checkpoint_every_n_hours=1)
 
-        self.session = tf.Session()
-        self.session.run(tf.initialize_all_variables())
-        self.checkpoint_dir = checkpoint_dir
+        #self.session = tf.Session()
+        #self.session.run(tf.initialize_all_variables())
+        #self.checkpoint_dir = checkpoint_dir
 
     def maybe_download_and_extract(self):
-        if not os.isdir('data/voc2012'):
-            voc_2012_tar_file = urllib2.urlopen('http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar')
-            with open('data/VOCtrainval_11-May-2012.tar','wb') as output:
-                output.write(voc_2012_tar_file.read())
-            with tarfile.open('data/VOCtrainval_11-May-2012.tar') as tar:
-                tar.extractall('data/voc2012')
+        if not os.path.isdir('data/VOC2012_TEST'):
+            subprocess.call("./data/download.sh", shell=True)
 
     def predict(self, image):
         if not os.path.exists(self.checkpoint_dir):
@@ -68,7 +63,7 @@ class FCN8_Segmentation:
         rgb = tf.reshape(image, [-1, 224, 224, 3])
 
         conv_1_1 = self.conv_layer(rgb, [3, 3, 1, 64], 64, 'conv_1_1')
-        conv_1_2 = self.conv_layer(conv_1_1, , [3, 3, 64, 64], 64, 'conv_1_2')
+        conv_1_2 = self.conv_layer(conv_1_1, [3, 3, 64, 64], 64, 'conv_1_2')
 
         pool_1 = self.pool_layer(conv_1_2)
 
@@ -128,7 +123,7 @@ class FCN8_Segmentation:
         deconv_1_2 = self.deconv_layer(unpool_1, [3, 3, 64, 64], 64, 'deconv_1_2')
         deconv_1_1 = self.deconv_layer(deconv_1_2, [3, 3, 32, 64], 32, 'deconv_1_1') 
 
-        score_1 = self.conv_layer(deconv_1_1, [1, 1, 21, 32], 21 'score_1')
+        score_1 = self.conv_layer(deconv_1_1, [1, 1, 21, 32], 21, 'score_1')
 
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(score_1, ground_truth, name='Cross_Entropy')
         cross_entropy_mean = tf.reduce_mean(cross_entropy, name='x_entropy_mean')
@@ -173,4 +168,5 @@ class FCN8_Segmentation:
         return tf.nn.conv2d_transpose(x, W, out_shape, strides, padding="SAME") + b
 
     def unpool_layer():
-        #TODO
+        #Todo
+        return
