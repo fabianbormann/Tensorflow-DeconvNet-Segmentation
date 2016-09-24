@@ -1,10 +1,11 @@
 import os
 import random
 import tensorflow as tf
+import urllib2
 import time
-import subprocess
+import tarfile
 
-class DeconvNet:
+class FCN8_Segmentation:
     def __init__(self, checkpoint_dir='./checkpoints/'):
         self.maybe_download_and_extract()
         self.build()
@@ -16,8 +17,12 @@ class DeconvNet:
         self.checkpoint_dir = checkpoint_dir
 
     def maybe_download_and_extract(self):
-        if not os.path.isdir('data/VOC2012_TEST'):
-            subprocess.call("./data/download.sh", shell=True)
+        if not os.isdir('data/voc2012'):
+            voc_2012_tar_file = urllib2.urlopen('http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar')
+            with open('data/VOCtrainval_11-May-2012.tar','wb') as output:
+                output.write(voc_2012_tar_file.read())
+            with tarfile.open('data/VOCtrainval_11-May-2012.tar') as tar:
+                tar.extractall('data/voc2012')
 
     def predict(self, image):
         if not os.path.exists(self.checkpoint_dir):
@@ -155,17 +160,13 @@ class DeconvNet:
         return tf.nn.max_pool_with_argmax(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
 
 
-    def deconv_layer(x, W_shape, b_shape, name, num_classes, dropout_prob=None, stride=2):
+    def deconv_layer(x, W_shape, b_shape, name, num_classes, dropout_prob=None, stride=1):
         W = weight_variable(W_shape)
         b = bias_variable([b_shape])
-        strides = [1, stride, stride, 1]
         x_shape = tf.shape(x)
+        out_shape = tf.pack([x_shape[0], x_shape[1], x_shape[2], W_shape[2]])
+        return tf.nn.conv2d_transpose(x, W, out_shape, [1, 1, 1, 1], padding="SAME") + b
 
-        height = x_shape[1] * stride
-        width = x_shape[2] * stride
-        out_shape = tf.pack([x_shape[0], height, width, num_classes])
-
-        return tf.nn.conv2d_transpose(x, W, out_shape, strides, padding="SAME") + b
 
     # waiting for better performance with fulture version of tf.unravel_index
     # https://github.com/tensorflow/tensorflow/issues/2075
@@ -207,3 +208,9 @@ class DeconvNet:
                     unraveled_pool_map[0, (h*2):2, (w*2):2, feature_map] *= x[0, h, w, feature_map]
 
         return argmax_from_pool_layer
+
+
+
+
+
+        
