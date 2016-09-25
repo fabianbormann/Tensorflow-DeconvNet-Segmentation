@@ -16,7 +16,7 @@ class DeconvNet:
         self.checkpoint_dir = checkpoint_dir
 
     def maybe_download_and_extract(self):
-        if not os.path.isdir('data/VOC2012_TEST'):
+        if not os.path.isdir('data/VOC2012'):
             subprocess.call("./data/download.sh", shell=True)
 
     def predict(self, image):
@@ -90,10 +90,10 @@ class DeconvNet:
 
         pool_5, pool_5_argmax = self.pool_layer(conv_5_3)
 
-        fc_6 = self.conv_layer(pool_5, [7, 7, 512, 4096], 4096, 'fc_6')
-        fc_7 = self.conv_layer(fc_6, [1, 1, 4096, 4096], 4096, 'fc_7')
+        fc_6 = self.conv_layer(pool_5, [7, 7, 512, 4096], 4096, 'fc_6', padding='SAME')
+        fc_7 = self.conv_layer(fc_6, [1, 1, 4096, 4096], 4096, 'fc_7', padding='SAME')
 
-        deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 4096, 'fc6_deconv')
+        deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 4096, 'fc6_deconv', padding='SAME')
 
         unpool_5 = self.unpool_layer2x2(deconv_fc_6, pool_5_argmax)
 
@@ -123,7 +123,7 @@ class DeconvNet:
         deconv_1_2 = self.deconv_layer(unpool_1, [3, 3, 64, 64], 64, 'deconv_1_2')
         deconv_1_1 = self.deconv_layer(deconv_1_2, [3, 3, 32, 64], 32, 'deconv_1_1') 
 
-        score_1 = self.conv_layer(deconv_1_1, [1, 1, 21, 32], 21 'score_1')
+        score_1 = self.deconv_layer(deconv_1_1, [1, 1, 21, 32], 21 'score_1')
 
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(score_1, ground_truth, name='Cross_Entropy')
         cross_entropy_mean = tf.reduce_mean(cross_entropy, name='x_entropy_mean')
@@ -145,27 +145,24 @@ class DeconvNet:
         return tf.Variable(initial)
 
 
-    def conv_layer(x, W_shape, b_shape, name):
+    def conv_layer(x, W_shape, b_shape, name, padding='VALID'):
         W = weight_variable(W_shape)
         b = bias_variable([b_shape])
-        return tf.nn.relu(tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME') + b)
+        return tf.nn.relu(tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding=padding) + b)
 
 
     def pool_layer(x):
         return tf.nn.max_pool_with_argmax(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
 
 
-    def deconv_layer(x, W_shape, b_shape, name, num_classes, dropout_prob=None, stride=2):
+    def deconv_layer(x, W_shape, b_shape, name, padding='VALID'):
         W = weight_variable(W_shape)
         b = bias_variable([b_shape])
-        strides = [1, stride, stride, 1]
+        
         x_shape = tf.shape(x)
+        out_shape = tf.pack([x_shape[0], x_shape[1]*2, x_shape[2]*2, W_shape[2]])
 
-        height = x_shape[1] * stride
-        width = x_shape[2] * stride
-        out_shape = tf.pack([x_shape[0], height, width, num_classes])
-
-        return tf.nn.conv2d_transpose(x, W, out_shape, strides, padding="SAME") + b
+        return tf.nn.conv2d_transpose(x, W, out_shape, [1, 1, 1, 1], padding=padding) + b
 
     # waiting for better performance with fulture version of tf.unravel_index
     # https://github.com/tensorflow/tensorflow/issues/2075
