@@ -2,7 +2,8 @@ import os
 import random
 import tensorflow as tf
 import time
-import subprocess
+import wget
+import tarfile
 import numpy as np
 import cv2
 
@@ -19,8 +20,18 @@ class DeconvNet:
         self.checkpoint_dir = checkpoint_dir
 
     def maybe_download_and_extract(self):
-        if not os.path.isdir('data/VOC2012'):
-            subprocess.call("./download.sh", shell=True)
+        if not os.path.isdir(os.path.join('data', 'VOC2012')):
+            filenames = ['VOC_OBJECT.tar.gz', 'VOC2012_SEG_AUG.tar.gz', 'stage_1_train_imgset.tar.gz', 'stage_2_train_imgset.tar.gz']
+            url = 'http://cvlab.postech.ac.kr/research/deconvnet/data/'
+
+            for filename in filenames:
+                wget.download(url + filename, out=os.path.join('data', filename))
+
+                tar = tarfile.open(os.path.join('data', filename))
+                tar.extractall(path='data')
+                tar.close()
+
+                os.remove(os.path.join('data', filename))
 
     def predict(self, image):
         if not os.path.exists(self.checkpoint_dir):
