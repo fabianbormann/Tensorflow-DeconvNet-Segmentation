@@ -20,7 +20,8 @@ class DeconvNet:
         self.checkpoint_dir = checkpoint_dir
 
     def maybe_download_and_extract(self):
-        if not os.path.isdir(os.path.join('data', 'VOC2012')):
+        """Download and unpack VOC data if data folder only contains the .gitignore file"""
+        if os.listdir('data') == ['.gitignore']:
             filenames = ['VOC_OBJECT.tar.gz', 'VOC2012_SEG_AUG.tar.gz', 'stage_1_train_imgset.tar.gz', 'stage_2_train_imgset.tar.gz']
             url = 'http://cvlab.postech.ac.kr/research/deconvnet/data/'
 
@@ -75,7 +76,7 @@ class DeconvNet:
 
         rgb = tf.reshape(image, [-1, 224, 224, 3])
 
-        conv_1_1 = self.conv_layer(rgb, [3, 3, 1, 64], 64, 'conv_1_1')
+        conv_1_1 = self.conv_layer(rgb, [3, 3, 3, 64], 64, 'conv_1_1')
         conv_1_2 = self.conv_layer(conv_1_1, [3, 3, 64, 64], 64, 'conv_1_2')
 
         pool_1, pool_1_argmax = self.pool_layer(conv_1_2)
@@ -97,16 +98,16 @@ class DeconvNet:
 
         pool_4, pool_4_argmax = self.pool_layer(conv_4_3)
 
-        conv_5_1 = self.conv_layer(pool_4, [3, 3, 256, 512], 512, 'conv_5_1')
-        conv_5_2 = self.conv_layer(conv_5_1, [3, 3, 256, 512], 512, 'conv_5_2')
-        conv_5_3 = self.conv_layer(conv_5_2, [3, 3, 256, 512], 512, 'conv_5_3')
+        conv_5_1 = self.conv_layer(pool_4, [3, 3, 512, 512], 512, 'conv_5_1')
+        conv_5_2 = self.conv_layer(conv_5_1, [3, 3, 512, 512], 512, 'conv_5_2')
+        conv_5_3 = self.conv_layer(conv_5_2, [3, 3, 512, 512], 512, 'conv_5_3')
 
         pool_5, pool_5_argmax = self.pool_layer(conv_5_3)
 
-        fc_6 = self.conv_layer(pool_5, [7, 7, 512, 4096], 4096, 'fc_6', padding='SAME')
-        fc_7 = self.conv_layer(fc_6, [1, 1, 4096, 4096], 4096, 'fc_7', padding='SAME')
+        fc_6 = self.conv_layer(pool_5, [7, 7, 512, 4096], 4096, 'fc_6')
+        fc_7 = self.conv_layer(fc_6, [1, 1, 4096, 4096], 4096, 'fc_7')
 
-        deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 4096, 'fc6_deconv', padding='SAME')
+        deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 4096, 'fc6_deconv')
 
         unpool_5 = self.unpool_layer2x2(deconv_fc_6, pool_5_argmax)
 
@@ -156,7 +157,7 @@ class DeconvNet:
         initial = tf.constant(0.1, shape=shape)
         return tf.Variable(initial)
 
-    def conv_layer(self, x, W_shape, b_shape, name, padding='VALID'):
+    def conv_layer(self, x, W_shape, b_shape, name, padding='SAME'):
         W = self.weight_variable(W_shape)
         b = self.bias_variable([b_shape])
         return tf.nn.relu(tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding=padding) + b)
@@ -164,7 +165,7 @@ class DeconvNet:
     def pool_layer(self, x):
         return tf.nn.max_pool_with_argmax(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
 
-    def deconv_layer(self, x, W_shape, b_shape, name, padding='VALID'):
+    def deconv_layer(self, x, W_shape, b_shape, name, padding='SAME'):
         W = self.weight_variable(W_shape)
         b = self.bias_variable([b_shape])
 
@@ -174,6 +175,8 @@ class DeconvNet:
         return tf.nn.conv2d_transpose(x, W, out_shape, [1, 1, 1, 1], padding=padding) + b
 
     # waiting for better performance with fulture version of tf.unravel_index
+    # ! Currently this method does not work as expected - see tests/UnpoolLayerTest.ipynb !
+    # If someone found a solution a PR would be great.
     # https://github.com/tensorflow/tensorflow/issues/2075
     def unravel_index(self, indices, shape):
         indices = tf.expand_dims(indices, 0)
@@ -182,13 +185,14 @@ class DeconvNet:
         strides_shifted = tf.cumprod(shape, exclusive=True, reverse=True)
         return (indices // strides_shifted) % strides
 
-    #  ! Not tested because currently I'm only on CPU !
-    # and there is no tf.nn.max_pool_with_argmax function for CPU only
-    # (This comment will be removed in the next 3 days)
-    # But also waiting for a nicer (C++ GPU) implementation
+    #  ! Currently not working -> see tests/UnpoolLayerTest.ipynb !
+    # There is no tf.nn.max_pool_with_argmax function for CPU only
+    # I will try to get this unpool mehtod working, but PR's are really welcome!
+    #
+    # Also waiting for a nicer (C++ GPU) implementation
     # https://github.com/tensorflow/tensorflow/issues/2169
     def unpool_layer2x2(self, x, argmax_from_pool_layer):
-        x_shape = x.get_shape().as_list()
+        x_shape = tf.shape(x)
         output_shape = [x_shape[0], x_shape[1] * 2, x_shape[2] * 2, x_shape[3]]
         argmax_shape = argmax_from_pool_layer.get_shape().as_list()
 
