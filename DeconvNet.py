@@ -34,6 +34,7 @@ class DeconvNet:
 
                 os.remove(os.path.join('data', filename))
 
+    # ! Does not work for now ! But currently I'm working on it -> PR's welcome!
     def predict(self, image):
         if not os.path.exists(self.checkpoint_dir):
             raise IOError(self.checkpoint_dir + ' does not exist.')
@@ -46,8 +47,9 @@ class DeconvNet:
 
         return self.prediction.eval(session=self.session, feed_dict={image: [image]})[0]
 
+    # ! Does not work for now ! But currently I'm working on it -> PR's welcome!
     def train(self, training_steps=1000, restore_session=False):
-        # TODO: change train method
+        # TODO: change train methods for train stage 1 & 2
         for i in range(0, training_steps):
             start = time.time()
             index = random.randint(1, 10)
@@ -109,37 +111,37 @@ class DeconvNet:
 
         deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 4096, 'fc6_deconv')
 
-        unpool_5 = self.unpool_layer2x2(deconv_fc_6, pool_5_argmax)
+        unpool_5 = self.unpool_layer2x2(deconv_fc_6, self.unravel_argmax(pool_5_argmax, tf.to_int64(tf.shape(conv_5_3))))
 
         deconv_5_3 = self.deconv_layer(unpool_5, [3, 3, 512, 512], 512, 'deconv_5_3')
         deconv_5_2 = self.deconv_layer(deconv_5_3, [3, 3, 512, 512], 512, 'deconv_5_2')
         deconv_5_1 = self.deconv_layer(deconv_5_2, [3, 3, 512, 512], 512, 'deconv_5_1')
 
-        unpool_4 = self.unpool_layer2x2(deconv_5_1, pool_4_argmax)
+        unpool_4 = self.unpool_layer2x2(deconv_5_1, self.unravel_argmax(pool_4_argmax, tf.to_int64(tf.shape(conv_4_3))))
 
         deconv_4_3 = self.deconv_layer(unpool_4, [3, 3, 512, 512], 512, 'deconv_4_3')
         deconv_4_2 = self.deconv_layer(deconv_4_3, [3, 3, 512, 512], 512, 'deconv_4_2')
         deconv_4_1 = self.deconv_layer(deconv_4_2, [3, 3, 256, 512], 256, 'deconv_4_1')
 
-        unpool_3 = self.unpool_layer2x2(deconv_4_1, pool_3_argmax)
+        unpool_3 = self.unpool_layer2x2(deconv_4_1, self.unravel_argmax(pool_3_argmax, tf.to_int64(tf.shape(conv_3_3))))
 
         deconv_3_3 = self.deconv_layer(unpool_3, [3, 3, 256, 256], 256, 'deconv_3_3')
         deconv_3_2 = self.deconv_layer(deconv_3_3, [3, 3, 256, 256], 256, 'deconv_3_2')
         deconv_3_1 = self.deconv_layer(deconv_3_2, [3, 3, 128, 256], 128, 'deconv_3_1')
 
-        unpool_2 = self.unpool_layer2x2(deconv_3_1, pool_2_argmax)
+        unpool_2 = self.unpool_layer2x2(deconv_3_1, self.unravel_argmax(pool_2_argmax, tf.to_int64(tf.shape(conv_2_2))))
 
         deconv_2_2 = self.deconv_layer(unpool_2, [3, 3, 128, 128], 128, 'deconv_2_2')
         deconv_2_1 = self.deconv_layer(deconv_2_2, [3, 3, 64, 128], 64, 'deconv_2_1')
 
-        unpool_1 = self.unpool_layer2x2(deconv_2_1, pool_1_argmax)
+        unpool_1 = self.unpool_layer2x2(deconv_2_1, self.unravel_argmax(pool_1_argmax, tf.to_int64(tf.shape(conv_1_2))))
 
         deconv_1_2 = self.deconv_layer(unpool_1, [3, 3, 64, 64], 64, 'deconv_1_2')
         deconv_1_1 = self.deconv_layer(deconv_1_2, [3, 3, 32, 64], 32, 'deconv_1_1')
 
         score_1 = self.deconv_layer(deconv_1_1, [1, 1, 21, 32], 21, 'score_1')
 
-        cross_entropy = tf.nn.softmax_cross_entropy_with_logits(score_1, ground_truth, name='Cross_Entropy')
+        cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(score_1, ground_truth, name='Cross_Entropy')
         cross_entropy_mean = tf.reduce_mean(cross_entropy, name='x_entropy_mean')
         tf.add_to_collection('losses', cross_entropy_mean)
 
@@ -147,7 +149,7 @@ class DeconvNet:
         self.train_step = tf.train.AdamOptimizer(1e-6).minimize(loss)
 
         self.prediction = tf.argmax(score_1, dimension=3)
-        self.accuracy = tf.reduce_sum(tf.pow(tf.to_float(self.prediction) - ground_truth, 2))
+        self.accuracy = tf.reduce_sum(tf.pow(self.prediction - ground_truth, 2))
 
     def weight_variable(self, shape):
         initial = tf.truncated_normal(shape, stddev=0.1)
@@ -174,45 +176,40 @@ class DeconvNet:
 
         return tf.nn.conv2d_transpose(x, W, out_shape, [1, 1, 1, 1], padding=padding) + b
 
-    # waiting for better performance with fulture version of tf.unravel_index
-    # ! Currently this method does not work as expected - see tests/UnpoolLayerTest.ipynb !
-    # If someone found a solution a PR would be great.
-    # https://github.com/tensorflow/tensorflow/issues/2075
-    def unravel_index(self, indices, shape):
-        indices = tf.expand_dims(indices, 0)
-        shape = tf.expand_dims(shape, 1)
-        strides = tf.cumprod(shape, reverse=True)
-        strides_shifted = tf.cumprod(shape, exclusive=True, reverse=True)
-        return (indices // strides_shifted) % strides
+    def unravel_argmax(self, argmax, shape):
+        output_list = []
+        output_list.append(argmax // (shape[2] * shape[3]))
+        output_list.append(argmax % (shape[2] * shape[3]) // shape[3])
+        return tf.pack(output_list)
 
-    #  ! Currently not working -> see tests/UnpoolLayerTest.ipynb !
-    # There is no tf.nn.max_pool_with_argmax function for CPU only
-    # I will try to get this unpool mehtod working, but PR's are really welcome!
-    #
+    #  ! Currently there is no tf.nn.max_pool_with_argmax function for CPU only !
     # Also waiting for a nicer (C++ GPU) implementation
     # https://github.com/tensorflow/tensorflow/issues/2169
-    def unpool_layer2x2(self, x, argmax_from_pool_layer):
+    def unpool_layer2x2(self, x, argmax):
         x_shape = tf.shape(x)
-        output_shape = [x_shape[0], x_shape[1] * 2, x_shape[2] * 2, x_shape[3]]
-        argmax_shape = argmax_from_pool_layer.get_shape().as_list()
+        output = tf.zeros([x_shape[1] * 2, x_shape[2] * 2, x_shape[3]])
 
-        unraveled_pool_map = tf.zeros(output_shape, dtype=tf.float32)
+        height = tf.shape(output)[0]
+        width = tf.shape(output)[1]
+        channels = tf.shape(output)[2]
 
-        pool_map = self.unravel_index(argmax_from_pool_layer, output_shape)
+        t1 = tf.to_int64(tf.range(channels))
+        t1 = tf.tile(t1, [(width // 2) * (height // 2)])
+        t1 = tf.reshape(t1, [-1, channels])
+        t1 = tf.transpose(t1, perm=[1, 0])
+        t1 = tf.reshape(t1, [channels, height // 2, width // 2, 1])
 
-        # Build unraveled pool map
-        # Zeros initialized tensor same size as 2*width x 2*height of x and contains
-        # ones at positions from argmax_from_pool_layer
-        for feature_map in range(argmax_shape[3]):
-            for h in range(argmax_shape[1]):
-                for w in range(argmax_shape[2]):
-                    unraveled_pool_map[pool_map[0, 0, h, w, feature_map], pool_map[1, 0, h, w, feature_map]]
+        t2 = tf.squeeze(argmax)
+        t2 = tf.pack((t2[0], t2[1]), axis=0)
+        t2 = tf.transpose(t2, perm=[3, 1, 2, 0])
 
-        # Multiply 2x2 field of unraveled pool map with index of x
-        # => Sets all positions of the unraveled pool map to corresponding x value
-        for feature_map in range(x_shape[3]):
-            for h in range(x_shape[1]):
-                for w in range(x_shape[2]):
-                    unraveled_pool_map[0, (h * 2):2, (w * 2):2, feature_map] *= x[0, h, w, feature_map]
+        t = tf.concat(3, [t2, t1])
+        indices = tf.reshape(t, [(height // 2) * (width // 2) * channels, 3])
 
-        return argmax_from_pool_layer
+        x1 = tf.squeeze(x)
+        x1 = tf.reshape(x1, [-1, channels])
+        x1 = tf.transpose(x1, perm=[1, 0])
+        values = tf.reshape(x1, [-1])
+
+        delta = tf.SparseTensor(indices, values, tf.to_int64(tf.shape(output)))
+        return tf.expand_dims(tf.sparse_tensor_to_dense(tf.sparse_reorder(delta)), 0)
