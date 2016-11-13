@@ -48,33 +48,35 @@ class DeconvNet:
         return self.prediction.eval(session=self.session, feed_dict={image: [image]})[0]
 
     # ! Does not work for now ! But currently I'm working on it -> PR's welcome!
-    def train(self, training_steps=1000, restore_session=False):
-        # TODO: change train methods for train stage 1 & 2
-        for i in range(0, training_steps):
-            start = time.time()
-            index = random.randint(1, 10)
-            image = np.float32(cv2.imread('data/{}.png'.format(str(index).zfill(3)), 0))
-            expected = np.float32(cv2.imread('data/{}.png'.format(str(index).zfill(3)), 0))
-            self.train_step.run(session=self.session, feed_dict={image: [image], ground_truth: [expected]})
+    def train(self, train_stage=1, training_steps=1000, restore_session=False):
+        for i in range(0, training_steps): 
+            if train_stage == 1:
+                # pick random line from file
+                random_line = random.choice(open('data/stage_1_train_imgset/train.txt').readlines())
+                image_file = random_line.split(' ')[0]
+                ground_truth_file = random_line.split(' ')[1]
+                image = np.float32(cv2.imread(image_file[1:]), 0)
+                expected = np.float32(cv2.imread(ground_truth_file[1:]), 0)
+            else:
+                # pick random line from file
+                random_line = random.choice(open('data/stage_2_train_imgset/train.txt').readlines())
+                image_file = random_line.split(' ')[0]
+                ground_truth_file = random_line.split(' ')[1]
+                image = np.float32(cv2.imread(image_file[1:]), 0)
+                expected = np.float32(cv2.imread(ground_truth_file[1:]), 0)
 
-            error = self.accuracy.eval(session=self.session, feed_dict={image: [image], ground_truth: [expected]})
-
-            print('step {} with trainset {} finished in {:.2f}s with error of {:.2%} ({} total) and loss {:.6f}'.format(
-                i, index, time.time() - start, (error/(expected.shape[0]*expected.shape[1])), 
-                int(error), loss.eval(session=session, feed_dict={x: [image], y: [expected]})))
-
-            if i % 10 == 0:
-                image = np.float32(cv2.imread('data/001.png', 0))
-                output = self.session.run(self.prediction, feed_dict={x: [image]})
-                cv2.imwrite('cache/output{}.png'.format(str(i).zfill(5)), np.uint8(output[0] * 255))
-
-            if i % 100 == 0:
+            self.train_step.run(session=self.session, feed_dict={image: [image], ground_truth: [ground_truth], learning_rate: 1e-6})
+            
+            if i % 1000 == 0: 
+                print('step {} finished in {:.2f} s with loss of {:.6f}'.format(
+                    i, time.time() - start, loss.eval(session=session, feed_dict={x: [image], y: [ground_truth]})))
                 self.saver.save(self.session, self.checkpoint_dir+'model', global_step=i)
                 print('Model {} saved'.format(i))
 
     def build(self):
         image = tf.placeholder(tf.float32, shape=[224, 224, 3])
         ground_truth = tf.placeholder(tf.int64, shape=[224, 224, 3])
+        learning_rate = tf.placeholder(tf.float32, shape=[])
 
         rgb = tf.reshape(image, [-1, 224, 224, 3])
 
@@ -141,14 +143,13 @@ class DeconvNet:
 
         score_1 = self.deconv_layer(deconv_1_1, [1, 1, 21, 32], 21, 'score_1')
 
-        cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(score_1, ground_truth, name='Cross_Entropy')
-        cross_entropy_mean = tf.reduce_mean(cross_entropy, name='x_entropy_mean')
-        tf.add_to_collection('losses', cross_entropy_mean)
+        logits = tf.reshape(score_1, (-1, 21))
+        cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits, tf.reshape(ground_truth, [-1]), name='x_entropy')
+        loss = tf.reduce_mean(cross_entropy, name='x_entropy_mean')
 
-        loss = tf.add_n(tf.get_collection('losses'), name='total_loss')
-        self.train_step = tf.train.AdamOptimizer(1e-6).minimize(loss)
+        self.train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
-        self.prediction = tf.argmax(score_1, dimension=3)
+        self.prediction = tf.argmax(tf.reshape(tf.nn.softmax(logits), tf.shape(score_1)), dimension=3)
         self.accuracy = tf.reduce_sum(tf.pow(self.prediction - ground_truth, 2))
 
     def weight_variable(self, shape):
