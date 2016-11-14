@@ -34,8 +34,8 @@ class DeconvNet:
 
                 os.remove(os.path.join('data', filename))
 
-    # ! Does not work for now ! But currently I'm working on it -> PR's welcome!
-    def predict(self, image):
+    def restore_session():
+        global_step = 0
         if not os.path.exists(self.checkpoint_dir):
             raise IOError(self.checkpoint_dir + ' does not exist.')
         else:
@@ -44,30 +44,38 @@ class DeconvNet:
                 raise IOError('No checkpoint to restore in ' + self.checkpoint_dir)
             else:
                 self.saver.restore(self.session, path.model_checkpoint_path)
+                global_step = int(path.model_checkpoint_path.split('-')[-1])
 
+        return global_step    
+
+    # ! Does not work for now ! But currently I'm working on it -> PR's welcome!
+    def predict(self, image):
+        restore_session()
         return self.prediction.eval(session=self.session, feed_dict={image: [image]})[0]
 
     # ! Does not work for now ! But currently I'm working on it -> PR's welcome!
     def train(self, train_stage=1, training_steps=1000, restore_session=False):
-        for i in range(0, training_steps): 
-            if train_stage == 1:
-                # pick random line from file
-                random_line = random.choice(open('data/stage_1_train_imgset/train.txt').readlines())
-                image_file = random_line.split(' ')[0]
-                ground_truth_file = random_line.split(' ')[1]
-                image = np.float32(cv2.imread(image_file[1:]), 0)
-                expected = np.float32(cv2.imread(ground_truth_file[1:]), 0)
-            else:
-                # pick random line from file
-                random_line = random.choice(open('data/stage_2_train_imgset/train.txt').readlines())
-                image_file = random_line.split(' ')[0]
-                ground_truth_file = random_line.split(' ')[1]
-                image = np.float32(cv2.imread(image_file[1:]), 0)
-                expected = np.float32(cv2.imread(ground_truth_file[1:]), 0)
+        if restore_session:
+            step_start = restore_session()
+        else:
+            step_start = 0
+
+        if train_stage == 1:
+            trainset = open('data/stage_1_train_imgset/train.txt').readlines()
+        else:
+            trainset = open('data/stage_2_train_imgset/train.txt').readlines()
+               
+        for i in range(step_start, step_start+training_steps): 
+            # pick random line from file
+            random_line = random.choice(trainset)
+            image_file = random_line.split(' ')[0]
+            ground_truth_file = random_line.split(' ')[1]
+            image = np.float32(cv2.imread(image_file[1:]), 0)
+            expected = np.float32(cv2.imread(ground_truth_file[1:]), 0)
 
             self.train_step.run(session=self.session, feed_dict={image: [image], ground_truth: [ground_truth], learning_rate: 1e-6})
             
-            if i % 1000 == 0: 
+            if i % 10000 == 0: 
                 print('step {} finished in {:.2f} s with loss of {:.6f}'.format(
                     i, time.time() - start, loss.eval(session=session, feed_dict={x: [image], y: [ground_truth]})))
                 self.saver.save(self.session, self.checkpoint_dir+'model', global_step=i)
