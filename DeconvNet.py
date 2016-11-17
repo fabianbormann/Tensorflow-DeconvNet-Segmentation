@@ -72,7 +72,7 @@ class DeconvNet:
             image_file = random_line.split(' ')[0]
             ground_truth_file = random_line.split(' ')[1]
             image = np.float32(cv2.imread('data' + image_file))
-            ground_truth = cv2.imread('' + ground_truth_file[:-1], cv2.IMREAD_GRAYSCALE)
+            ground_truth = cv2.imread('data' + ground_truth_file[:-1], cv2.IMREAD_GRAYSCALE)
 
             self.train_step.run(session=self.session, feed_dict={self.x: [image], self.y: [ground_truth], self.rate: learning_rate})
             
