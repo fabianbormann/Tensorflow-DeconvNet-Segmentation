@@ -276,7 +276,14 @@ if __name__ == '__main__':
             [filenames], num_epochs=num_epochs,shuffle=False)
 
         image, label = read_and_decode(filename_queue)
-        return image, label
+
+        images_batch, labels_batch = tf.train.batch(
+            [image, label], 
+            batch_size=batch_size,
+            allow_smaller_final_batch=True,
+            )
+
+        return images_batch, labels_batch
         '''
         min_after_dequeue = 100
         capacity = min_after_dequeue + 3 * batch_size
