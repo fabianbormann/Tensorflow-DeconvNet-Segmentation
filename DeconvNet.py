@@ -262,10 +262,20 @@ if __name__ == '__main__':
             }
         )
 
+        '''
         image = tf.decode_raw(features['image_raw'], tf.float32)
         segmentation = tf.decode_raw(features['mask_raw'], tf.int64)
+        '''
+        image = tf.decode_raw(features['image_raw'], tf.uint8)
+        segmentation = tf.decode_raw(features['mask_raw'], tf.uint8)
         image.set_shape([224*224*3])
         segmentation.set_shape([224*224*1])
+
+        '''
+        image = tf.cast(image, tf.float32)
+        segmentation = tf.cast(segmentation, tf.int64)
+        '''
+
         image = tf.reshape(image,[224,224,3])
         segmentation = tf.reshape(segmentation,[224,224])
         
@@ -297,9 +307,12 @@ if __name__ == '__main__':
             min_after_dequeue=min_after_dequeue)
         return images_batch, labels_batch
 
+    def cast_inputs_from_pipeline(img, seg):
+        return tf.cast(img,tf.float32), tf.cast(seg,tf.int64)
+
     # begin
     parser = argparse.ArgumentParser()
-    parser.add_argument('--train_record', help="training tfrecord file", default="input_data_birds_crop.tfrecords")
+    parser.add_argument('--train_record', help="training tfrecord file", default="input_data_ciona_crop.tfrecords")
     parser.add_argument('--batch_size', help="batch size", type=int, default=32)
     parser.add_argument('--num_epochs', help="number of epochs.", type=int, default=50)
     parser.add_argument('--lr',help="learning rate",type=float, default=1e-6)
@@ -309,6 +322,12 @@ if __name__ == '__main__':
                                                     args.train_record,
                                                     args.batch_size,
                                                     args.num_epochs)
+    '''
+    trn_images_batch, trn_segmentations_batch = cast_inputs_from_pipeline(
+                                                    trn_images_batch,
+                                                    trn_segmentations_batch)
+    '''
+
 
     deconvnet = DeconvNet(trn_images_batch, trn_segmentations_batch, args.lr, use_cpu=False)
     config = tf.ConfigProto(allow_soft_placement = True)
