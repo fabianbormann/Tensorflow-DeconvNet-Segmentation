@@ -19,23 +19,13 @@ Type "help", "copyright", "credits" or "license" for more information.
 >>> deconvNet = DeconvNet() # will start collecting the VOC2012 data
 ```
 
+### Status
+
 See `img_to_records_birds.py` for example of how to create `TFRecord`, 
 and how to read in DeconvNet.py. Note that main has now moved to Deconvnet.py
 
-The line:
-
-`segmentation = tf.reshape(segmentation,[224,224])`
-
-results in:
-
-InvalidArgumentError (see above for traceback): Input to reshape is a tensor with 75264 values, but the requested shape has 50176
-
-but I think it is very close!
-
-# edit
-
-since the `BytesList` format is used for the TFRecord, it must be read back as uint8, which makes this error go away. Now the problem is to confert `self.x` to `tf.float32` 
-at the image level (not across batches). `tf.cast` doesn't seem to let us specify the dimensions across which to cast, perhaps there is a better way?
+The implementation is nearly working, currently getting `Shapes (5,) and (6,) are not compatible` in 
+`unpool_layer2x2_batch` (same result when using non-batch equivalent), specifically on line `t3 = tf.transpose(argmax, perm=[1, 4, 2, 3, 0])`.
 
 I added a small sample TFRecord `input_data_ciona_crop.tfrecords` you can use to reproduce.
 
