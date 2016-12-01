@@ -52,7 +52,7 @@ with tf.Session() as sess:
     writer = tf.python_io.TFRecordWriter(filename)
     threads = tf.train.start_queue_runners(coord=coord)
 
-    iseq_len=1000
+    iseq_len=50
     # show progress bar
     for index in tqdm(range(iseq_len)):  #(11648)
         try:

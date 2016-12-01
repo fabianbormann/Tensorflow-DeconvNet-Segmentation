@@ -266,6 +266,7 @@ if __name__ == '__main__':
         image = tf.decode_raw(features['image_raw'], tf.float32)
         segmentation = tf.decode_raw(features['mask_raw'], tf.int64)
         '''
+        # must be read back as uint8 here
         image = tf.decode_raw(features['image_raw'], tf.uint8)
         segmentation = tf.decode_raw(features['mask_raw'], tf.uint8)
         image.set_shape([224*224*3])

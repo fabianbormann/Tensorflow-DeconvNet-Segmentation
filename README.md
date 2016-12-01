@@ -32,5 +32,12 @@ InvalidArgumentError (see above for traceback): Input to reshape is a tensor wit
 
 but I think it is very close!
 
+# edit
+
+since the `BytesList` format is used for the TFRecord, it must be read back as uint8, which makes this error go away. Now the problem is to confert `self.x` to `tf.float32` 
+at the image level (not across batches). `tf.cast` doesn't seem to let us specify the dimensions across which to cast, perhaps there is a better way?
+
+I added a small sample TFRecord `input_data_ciona_crop.tfrecords` you can use to reproduce.
+
 --
 Contributions welcome!
