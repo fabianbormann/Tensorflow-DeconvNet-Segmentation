@@ -277,15 +277,17 @@ if __name__ == '__main__':
 
         image, label = read_and_decode(filename_queue)
 
+        '''
         images_batch, labels_batch = tf.train.batch(
             [image, label], 
+            enqueue_many=False,
             batch_size=batch_size,
             allow_smaller_final_batch=True,
             )
 
         return images_batch, labels_batch
         '''
-        min_after_dequeue = 100
+        min_after_dequeue = 1000
         capacity = min_after_dequeue + 3 * batch_size
         images_batch, labels_batch = tf.train.shuffle_batch(
             [image, label], batch_size=batch_size,
@@ -294,13 +296,12 @@ if __name__ == '__main__':
             capacity=capacity,
             min_after_dequeue=min_after_dequeue)
         return images_batch, labels_batch
-        '''        
 
     # begin
     parser = argparse.ArgumentParser()
     parser.add_argument('--train_record', help="training tfrecord file", default="input_data_birds_crop.tfrecords")
-    parser.add_argument('--batch_size', help="batch size", type=int, default=1)
-    parser.add_argument('--num_epochs', help="number of epochs.", type=int, default=8)
+    parser.add_argument('--batch_size', help="batch size", type=int, default=32)
+    parser.add_argument('--num_epochs', help="number of epochs.", type=int, default=50)
     parser.add_argument('--lr',help="learning rate",type=float, default=1e-6)
     args = parser.parse_args()
 
@@ -312,9 +313,12 @@ if __name__ == '__main__':
     deconvnet = DeconvNet(trn_images_batch, trn_segmentations_batch, args.lr, use_cpu=False)
     config = tf.ConfigProto(allow_soft_placement = True)
 
+    init = tf.initialize_all_variables()
+    init_locals = tf.initialize_local_variables()
+
     with tf.Session(config=config) as sess:
 
-        sess.run(tf.initialize_all_variables())
+        sess.run([init, init_locals])
         
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(coord=coord)
@@ -323,6 +327,7 @@ if __name__ == '__main__':
             try:
                 while not coord.should_stop():
                     sess.run(deconvnet.train_step)
+                    print sess.run(deconvnet.prediction)
             
             except tf.errors.OutOfRangeError:
                 print 'Done training -- epoch limit reached'
