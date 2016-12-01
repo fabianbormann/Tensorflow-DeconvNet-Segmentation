@@ -73,7 +73,7 @@ class DeconvNet:
             #self.x = tf.placeholder(tf.float32, shape=(None, None, None, 3), name='x_data')
             #self.y = tf.placeholder(tf.int64, shape=(None, None, None), name='y_data')
 
-            conv_1_1 = self.conv_layer(self.x, [3, 3, 3, 64], 64, 'conv_1_1')
+            conv_1_1 = self.conv_layer(tf.cast(self.x,tf.float32), [3, 3, 3, 64], 64, 'conv_1_1')
             conv_1_2 = self.conv_layer(conv_1_1, [3, 3, 64, 64], 64, 'conv_1_2')
 
             pool_1, pool_1_argmax = self.pool_layer(conv_1_2)
@@ -106,30 +106,35 @@ class DeconvNet:
 
             deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 512, 'fc6_deconv')
 
-            unpool_5 = self.unpool_layer2x2(deconv_fc_6, self.unravel_argmax(pool_5_argmax, tf.to_int64(tf.shape(conv_5_3))))
+            #unpool_5 = self.unpool_layer2x2(deconv_fc_6, self.unravel_argmax(pool_5_argmax, tf.to_int64(tf.shape(conv_5_3))))
+            unpool_5 = self.unpool_layer2x2_batch(deconv_fc_6, self.unravel_argmax(pool_5_argmax, tf.to_int64(tf.shape(conv_5_3))))
 
             deconv_5_3 = self.deconv_layer(unpool_5, [3, 3, 512, 512], 512, 'deconv_5_3')
             deconv_5_2 = self.deconv_layer(deconv_5_3, [3, 3, 512, 512], 512, 'deconv_5_2')
             deconv_5_1 = self.deconv_layer(deconv_5_2, [3, 3, 512, 512], 512, 'deconv_5_1')
 
-            unpool_4 = self.unpool_layer2x2(deconv_5_1, self.unravel_argmax(pool_4_argmax, tf.to_int64(tf.shape(conv_4_3))))
+            #unpool_4 = self.unpool_layer2x2(deconv_5_1, self.unravel_argmax(pool_4_argmax, tf.to_int64(tf.shape(conv_4_3))))
+            unpool_4 = self.unpool_layer2x2_batch(deconv_5_1, self.unravel_argmax(pool_4_argmax, tf.to_int64(tf.shape(conv_4_3))))
 
             deconv_4_3 = self.deconv_layer(unpool_4, [3, 3, 512, 512], 512, 'deconv_4_3')
             deconv_4_2 = self.deconv_layer(deconv_4_3, [3, 3, 512, 512], 512, 'deconv_4_2')
             deconv_4_1 = self.deconv_layer(deconv_4_2, [3, 3, 256, 512], 256, 'deconv_4_1')
 
-            unpool_3 = self.unpool_layer2x2(deconv_4_1, self.unravel_argmax(pool_3_argmax, tf.to_int64(tf.shape(conv_3_3))))
+            #unpool_3 = self.unpool_layer2x2(deconv_4_1, self.unravel_argmax(pool_3_argmax, tf.to_int64(tf.shape(conv_3_3))))
+            unpool_3 = self.unpool_layer2x2_batch(deconv_4_1, self.unravel_argmax(pool_3_argmax, tf.to_int64(tf.shape(conv_3_3))))
 
             deconv_3_3 = self.deconv_layer(unpool_3, [3, 3, 256, 256], 256, 'deconv_3_3')
             deconv_3_2 = self.deconv_layer(deconv_3_3, [3, 3, 256, 256], 256, 'deconv_3_2')
             deconv_3_1 = self.deconv_layer(deconv_3_2, [3, 3, 128, 256], 128, 'deconv_3_1')
 
-            unpool_2 = self.unpool_layer2x2(deconv_3_1, self.unravel_argmax(pool_2_argmax, tf.to_int64(tf.shape(conv_2_2))))
+            #unpool_2 = self.unpool_layer2x2(deconv_3_1, self.unravel_argmax(pool_2_argmax, tf.to_int64(tf.shape(conv_2_2))))
+            unpool_2 = self.unpool_layer2x2_batch(deconv_3_1, self.unravel_argmax(pool_2_argmax, tf.to_int64(tf.shape(conv_2_2))))
 
             deconv_2_2 = self.deconv_layer(unpool_2, [3, 3, 128, 128], 128, 'deconv_2_2')
             deconv_2_1 = self.deconv_layer(deconv_2_2, [3, 3, 64, 128], 64, 'deconv_2_1')
 
-            unpool_1 = self.unpool_layer2x2(deconv_2_1, self.unravel_argmax(pool_1_argmax, tf.to_int64(tf.shape(conv_1_2))))
+            #unpool_1 = self.unpool_layer2x2(deconv_2_1, self.unravel_argmax(pool_1_argmax, tf.to_int64(tf.shape(conv_1_2))))
+            unpool_1 = self.unpool_layer2x2_batch(deconv_2_1, self.unravel_argmax(pool_1_argmax, tf.to_int64(tf.shape(conv_1_2))))
 
             deconv_1_2 = self.deconv_layer(unpool_1, [3, 3, 64, 64], 64, 'deconv_1_2')
             deconv_1_1 = self.deconv_layer(deconv_1_2, [3, 3, 32, 64], 32, 'deconv_1_1')
@@ -315,6 +320,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--train_record', help="training tfrecord file", default="input_data_ciona_crop.tfrecords")
     parser.add_argument('--batch_size', help="batch size", type=int, default=32)
+    #parser.add_argument('--batch_size', help="batch size", type=int, default=1)
     parser.add_argument('--num_epochs', help="number of epochs.", type=int, default=50)
     parser.add_argument('--lr',help="learning rate",type=float, default=1e-6)
     args = parser.parse_args()
