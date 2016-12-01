@@ -5,20 +5,20 @@ import time
 import wget
 import tarfile
 import numpy as np
-import cv2
-
+import argparse
 
 class DeconvNet:
-    def __init__(self, use_cpu=False, checkpoint_dir='./checkpoints/'):
-        self.maybe_download_and_extract()
+    def __init__(self, images, segmentations, lr, use_cpu=False, checkpoint_dir='./checkpoints/'):
+        #self.maybe_download_and_extract()
         
+        self.x = images
+        self.y = segmentations
         self.build(use_cpu=use_cpu)
 
         self.saver = tf.train.Saver(max_to_keep = 5, keep_checkpoint_every_n_hours =1)
-        config = tf.ConfigProto(allow_soft_placement = True)
-        self.session = tf.Session(config = config)
-        self.session.run(tf.initialize_all_variables())
         self.checkpoint_dir = checkpoint_dir
+        self.rate=lr
+        start=time.time()
 
     def maybe_download_and_extract(self):
         """Download and unpack VOC data if data folder only contains the .gitignore file"""
@@ -54,34 +54,6 @@ class DeconvNet:
         restore_session()
         return self.prediction.eval(session=self.session, feed_dict={image: [image]})[0]
 
-    # ! Does not work for now ! But currently I'm working on it -> PR's welcome!
-    def train(self, train_stage=1, training_steps=1000, restore_session=False, learning_rate=1e-6):
-        if restore_session:
-            step_start = restore_session()
-        else:
-            step_start = 0
-
-        if train_stage == 1:
-            trainset = open('data/stage_1_train_imgset/train.txt').readlines()
-        else:
-            trainset = open('data/stage_2_train_imgset/train.txt').readlines()
-               
-        for i in range(step_start, step_start+training_steps): 
-            # pick random line from file
-            random_line = random.choice(trainset)
-            image_file = random_line.split(' ')[0]
-            ground_truth_file = random_line.split(' ')[1]
-            image = np.float32(cv2.imread('data' + image_file))
-            ground_truth = cv2.imread('data' + ground_truth_file[:-1], cv2.IMREAD_GRAYSCALE)
-
-            self.train_step.run(session=self.session, feed_dict={self.x: [image], self.y: [ground_truth], self.rate: learning_rate})
-            
-            if i % 10000 == 0: 
-                print('step {} finished in {:.2f} s with loss of {:.6f}'.format(
-                    i, time.time() - start, loss.eval(session=session, feed_dict={self.x: [image], self.y: [ground_truth]})))
-                self.saver.save(self.session, self.checkpoint_dir+'model', global_step=i)
-                print('Model {} saved'.format(i))
-
     def build(self, use_cpu=False):
         '''
         use_cpu allows you to test or train the network even with low GPU memory
@@ -95,10 +67,11 @@ class DeconvNet:
         else:
             device = '/gpu:0'
 
+
         with tf.device(device):
-            self.x = tf.placeholder(tf.float32, shape=(1, None, None, 3))
-            self.y = tf.placeholder(tf.int64, shape=(1, None, None, 3))
-            self.rate = tf.placeholder(tf.float32, shape=[])
+            # Don't need placeholders when prefetching TFRecords
+            #self.x = tf.placeholder(tf.float32, shape=(None, None, None, 3), name='x_data')
+            #self.y = tf.placeholder(tf.int64, shape=(None, None, None), name='y_data')
 
             conv_1_1 = self.conv_layer(self.x, [3, 3, 3, 64], 64, 'conv_1_1')
             conv_1_2 = self.conv_layer(conv_1_1, [3, 3, 64, 64], 64, 'conv_1_2')
@@ -164,13 +137,15 @@ class DeconvNet:
             score_1 = self.deconv_layer(deconv_1_1, [1, 1, 21, 32], 21, 'score_1')
 
             logits = tf.reshape(score_1, (-1, 21))
-            cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits, tf.reshape(self.y, [-1]), name='x_entropy')
+            cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits, tf.cast(tf.reshape(self.y, [-1]), tf.int64), name='x_entropy')
             loss = tf.reduce_mean(cross_entropy, name='x_entropy_mean')
+            loss = tf.Print(loss, [loss], "loss: ")
 
-            self.train_step = tf.train.AdamOptimizer(self.rate).minimize(loss)
+            self.train_step = tf.train.AdamOptimizer(1e-6).minimize(loss)
 
             self.prediction = tf.argmax(tf.reshape(tf.nn.softmax(logits), tf.shape(score_1)), dimension=3)
-            self.accuracy = tf.reduce_sum(tf.pow(self.prediction - self.y, 2))
+            # commented out for now, was throwing errors, calculating loss is fine.
+            #self.accuracy = tf.reduce_sum(tf.pow(self.prediction - self.y, 2))
 
     def weight_variable(self, shape):
         initial = tf.truncated_normal(shape, stddev=0.1)
@@ -237,25 +212,17 @@ class DeconvNet:
         delta = tf.SparseTensor(indices, values, tf.to_int64(tf.shape(output)))
         return tf.expand_dims(tf.sparse_tensor_to_dense(tf.sparse_reorder(delta)), 0)
 
-    def unpool_layer2x2_batch(self, x, argmax):
-        '''
-        Args:
-            x: 4D tensor of shape [batch_size x height x width x channels]
-            argmax: A Tensor of type Targmax. 4-D. The flattened indices of the max 
-            values chosen for each output. 
-        Return:
-            4D output tensor of shape [batch_size x 2*height x 2*width x channels]
-        '''
-        x_shape = tf.shape(x)
-        out_shape = [x_shape[0], x_shape[1]*2, x_shape[2]*2, x_shape[3]]
+    def unpool_layer2x2_batch(self, bottom, argmax):
+        bottom_shape = tf.shape(bottom)
+        top_shape = [bottom_shape[0], bottom_shape[1]*2, bottom_shape[2]*2, bottom_shape[3]]
 
-        batch_size = out_shape[0]
-        height = out_shape[1]
-        width = out_shape[2]
-        channels = out_shape[3]
+        batch_size = top_shape[0]
+        height = top_shape[1]
+        width = top_shape[2]
+        channels = top_shape[3]
 
         argmax_shape = tf.to_int64([batch_size, height, width, channels])
-        argmax = unravel_argmax(argmax, argmax_shape)
+        argmax = self.unravel_argmax(argmax, argmax_shape)
 
         t1 = tf.to_int64(tf.range(channels))
         t1 = tf.tile(t1, [batch_size*(width//2)*(height//2)])
@@ -275,8 +242,83 @@ class DeconvNet:
         t = tf.concat(4, [t2, t3, t1])
         indices = tf.reshape(t, [(height//2)*(width//2)*channels*batch_size, 4])
 
-        x1 = tf.transpose(x, perm=[0, 3, 1, 2])
+        x1 = tf.transpose(bottom, perm=[0, 3, 1, 2])
         values = tf.reshape(x1, [-1])
 
-        delta = tf.SparseTensor(indices, values, tf.to_int64(out_shape))
+        delta = tf.SparseTensor(indices, values, tf.to_int64(top_shape))
         return tf.sparse_tensor_to_dense(tf.sparse_reorder(delta))
+
+if __name__ == '__main__':
+
+    def read_and_decode(filename_queue):
+        reader = tf.TFRecordReader()
+        _, serialized_example = reader.read(filename_queue)
+        features = tf.parse_single_example(
+            serialized_example,
+            # Defaults are not specified since both keys are required.
+            features={
+                'image_raw': tf.FixedLenFeature([], tf.string),
+                'mask_raw': tf.FixedLenFeature([], tf.string),
+            }
+        )
+
+        image = tf.decode_raw(features['image_raw'], tf.float32)
+        segmentation = tf.decode_raw(features['mask_raw'], tf.int64)
+        image.set_shape([224*224*3])
+        segmentation.set_shape([224*224*1])
+        image = tf.reshape(image,[224,224,3])
+        segmentation = tf.reshape(segmentation,[224,224])
+        
+        return image, segmentation
+
+    def input_pipeline(filenames, batch_size, num_epochs):
+        filename_queue = tf.train.string_input_producer(
+            [filenames], num_epochs=num_epochs,shuffle=False)
+
+        image, label = read_and_decode(filename_queue)
+        return image, label
+        '''
+        min_after_dequeue = 100
+        capacity = min_after_dequeue + 3 * batch_size
+        images_batch, labels_batch = tf.train.shuffle_batch(
+            [image, label], batch_size=batch_size,
+            enqueue_many=False, shapes=None,
+            allow_smaller_final_batch=True,
+            capacity=capacity,
+            min_after_dequeue=min_after_dequeue)
+        return images_batch, labels_batch
+        '''        
+
+    # begin
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train_record', help="training tfrecord file", default="input_data_birds_crop.tfrecords")
+    parser.add_argument('--batch_size', help="batch size", type=int, default=1)
+    parser.add_argument('--num_epochs', help="number of epochs.", type=int, default=8)
+    parser.add_argument('--lr',help="learning rate",type=float, default=1e-6)
+    args = parser.parse_args()
+
+    trn_images_batch, trn_segmentations_batch = input_pipeline(
+                                                    args.train_record,
+                                                    args.batch_size,
+                                                    args.num_epochs)
+
+    deconvnet = DeconvNet(trn_images_batch, trn_segmentations_batch, args.lr, use_cpu=False)
+    config = tf.ConfigProto(allow_soft_placement = True)
+
+    with tf.Session(config=config) as sess:
+
+        sess.run(tf.initialize_all_variables())
+        
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(coord=coord)
+
+        for i in range(0,2):        
+            try:
+                while not coord.should_stop():
+                    sess.run(deconvnet.train_step)
+            
+            except tf.errors.OutOfRangeError:
+                print 'Done training -- epoch limit reached'
+            finally:
+                coord.request_stop()
+                coord.join(threads)
