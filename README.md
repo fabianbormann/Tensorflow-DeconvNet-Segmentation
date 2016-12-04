@@ -17,5 +17,16 @@ Type "help", "copyright", "credits" or "license" for more information.
 >>> deconvNet = DeconvNet() # will start collecting the VOC2012 data
 ```
 
+### Improving training
+`python write-tfrecords/img_to_records_pascal.py`
+
+Will write entire PASCAL VOC2012 dataset as TFRecord. Takes about 4mins @ 100it/s.
+
+Default behaviour:
+- assumes default dataset location from DeconvNet.py
+- writes TFRecord to `tfrecords` folder
+- Uses [resize_image_with_crop_or_pad](https://www.tensorflow.org/versions/r0.12/api_docs/python/image.html#resize_image_with_crop_or_pad) to make all images and segmentations fixed size of 224x224
+- run with `-h` to see help and change defaults, will need to change `decode_png` to use image format other than png.
+
 --
 Contributions welcome!
