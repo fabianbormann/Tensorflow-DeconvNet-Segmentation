@@ -1,5 +1,9 @@
-Tensorflow implementation of [Learning Deconvolution Network for Semantic Segmentation](http://arxiv.org/pdf/1505.04366v1.pdf). 
+Tensorflow implementation of [Learning Deconvolution Network for Semantic Segmentation](http://arxiv.org/pdf/1505.04366v1.pdf).
 ## Install Instructions
+
+1. Get a [Tensorflow version](https://www.tensorflow.org/versions/r0.12/get_started/os_setup.html#pip-installation) that fits to your system
+
+2. Run the following commands in your terminal
 
 ```zsh
 git clone https://github.com/fabianbormann/Tensorflow-DeconvNet-Segmentation.git
@@ -10,10 +14,10 @@ python3
 ```
 
 ```python
-Python 3.5.2+ (default, Sep 22 2016, 12:18:14) 
+Python 3.5.2+ (default, Sep 22 2016, 12:18:14)
 [GCC 6.2.0 20160927] on linux
 Type "help", "copyright", "credits" or "license" for more information.
->>> from DeconvNet import DeconvNet 
+>>> from DeconvNet import DeconvNet
 >>> deconvNet = DeconvNet() # will start collecting the VOC2012 data
 ```
 
