@@ -1,7 +1,7 @@
 import os
 import random
 import tensorflow as tf
-import wget
+#import wget
 import tarfile
 import numpy as np
 import argparse
@@ -17,7 +17,9 @@ class DeconvNet:
         self.y = segmentations
         self.build(use_cpu=use_cpu)
 
-        self.saver = tf.train.Saver(max_to_keep = 5, keep_checkpoint_every_n_hours =1)
+        #self.saver = tf.train.Saver(max_to_keep = 5, keep_checkpoint_every_n_hours =1)
+        self.saver = tf.train.Saver(tf.global_variables(), \
+            max_to_keep=5, keep_checkpoint_every_n_hours=1) # v0.12
         self.checkpoint_dir = checkpoint_dir
         #self.rate=lr
         #start=time.time()
@@ -334,19 +336,27 @@ if __name__ == '__main__':
 
     train_step=tf.train.AdamOptimizer(args.lr).minimize(loss_mean)
 
-    init = tf.initialize_all_variables()
-    init_locals = tf.initialize_local_variables()
+    summary_op = tf.summary.merge_all() # v0.12
+
+    #init = tf.initialize_all_variables()
+    #init_locals = tf.initialize_local_variables()
+
+    init_global = tf.global_variables_initializer() # v0.12
+    init_locals = tf.local_variables_initializer() # v0.12
 
     config = tf.ConfigProto(allow_soft_placement = True)
+
     with tf.Session(config=config) as sess:
 
-        sess.run([init, init_locals])
+        sess.run([init_global, init_locals])
         
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(coord=coord)
 
-        summary_writer = tf.train.SummaryWriter(args.train_dir, sess.graph)
-        training_summary = tf.scalar_summary("loss", loss_mean)
+        #summary_writer = tf.train.SummaryWriter(args.train_dir, sess.graph)
+        summary_writer = tf.summary.FileWriter(args.train_dir, sess.graph) # v0.12
+        #training_summary = tf.scalar_summary("loss", loss_mean)
+        training_summary = tf.summary.scalar("loss", loss_mean) # v0.12
         
         try:
             step=0
