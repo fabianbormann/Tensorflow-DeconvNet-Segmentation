@@ -10,6 +10,8 @@ import time
 from datetime import datetime
 
 from utils import input_pipeline
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import gen_nn_ops
 
 class DeconvNet:
     def __init__(self, images, segmentations, use_cpu=False, checkpoint_dir='./checkpoints/'):
@@ -60,6 +62,16 @@ class DeconvNet:
         restore_session()
         return self.prediction.eval(session=self.session, feed_dict={image: [image]})[0]
 
+    # From Github user bcaine, https://github.com/tensorflow/tensorflow/issues/1793
+    @ops.RegisterGradient("MaxPoolWithArgmax")
+    def _MaxPoolGradWithArgmax(op, grad, unused_argmax_grad):
+      return gen_nn_ops._max_pool_grad_with_argmax(op.inputs[0],
+                                                   grad,
+                                                   op.outputs[1],
+                                                   op.get_attr("ksize"),
+                                                   op.get_attr("strides"),
+                                                   padding=op.get_attr("padding"))
+
     def build(self, use_cpu=False):
         '''
         use_cpu allows you to test or train the network even with low GPU memory
@@ -75,6 +87,8 @@ class DeconvNet:
 
 
         with tf.device(device):
+
+
             # Don't need placeholders when prefetching TFRecords
             #self.x = tf.placeholder(tf.float32, shape=(None, None, None, 3), name='x_data')
             #self.y = tf.placeholder(tf.int64, shape=(None, None, None), name='y_data')
@@ -112,30 +126,35 @@ class DeconvNet:
 
             deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 512, 'fc6_deconv')
 
-            unpool_5 = self.unpool_layer2x2_batch(deconv_fc_6, pool_5_argmax, tf.shape(conv_5_3))
+            #unpool_5 = self.unpool_layer2x2_batch(deconv_fc_6, pool_5_argmax, tf.shape(conv_5_3))
+            unpool_5 = self.unpool_layer2x2_batch(deconv_fc_6, pool_5_argmax)
 
             deconv_5_3 = self.deconv_layer(unpool_5, [3, 3, 512, 512], 512, 'deconv_5_3')
             deconv_5_2 = self.deconv_layer(deconv_5_3, [3, 3, 512, 512], 512, 'deconv_5_2')
             deconv_5_1 = self.deconv_layer(deconv_5_2, [3, 3, 512, 512], 512, 'deconv_5_1')
 
-            unpool_4 = self.unpool_layer2x2_batch(deconv_5_1, pool_4_argmax, tf.shape(conv_4_3))
+            #unpool_4 = self.unpool_layer2x2_batch(deconv_5_1, pool_4_argmax, tf.shape(conv_4_3))
+            unpool_4 = self.unpool_layer2x2_batch(deconv_5_1, pool_4_argmax)
 
             deconv_4_3 = self.deconv_layer(unpool_4, [3, 3, 512, 512], 512, 'deconv_4_3')
             deconv_4_2 = self.deconv_layer(deconv_4_3, [3, 3, 512, 512], 512, 'deconv_4_2')
             deconv_4_1 = self.deconv_layer(deconv_4_2, [3, 3, 256, 512], 256, 'deconv_4_1')
 
-            unpool_3 = self.unpool_layer2x2_batch(deconv_4_1, pool_3_argmax, tf.shape(conv_3_3))
+            #unpool_3 = self.unpool_layer2x2_batch(deconv_4_1, pool_3_argmax, tf.shape(conv_3_3))
+            unpool_3 = self.unpool_layer2x2_batch(deconv_4_1, pool_3_argmax)
 
             deconv_3_3 = self.deconv_layer(unpool_3, [3, 3, 256, 256], 256, 'deconv_3_3')
             deconv_3_2 = self.deconv_layer(deconv_3_3, [3, 3, 256, 256], 256, 'deconv_3_2')
             deconv_3_1 = self.deconv_layer(deconv_3_2, [3, 3, 128, 256], 128, 'deconv_3_1')
 
-            unpool_2 = self.unpool_layer2x2_batch(deconv_3_1, pool_2_argmax, tf.shape(conv_2_2))
+            #unpool_2 = self.unpool_layer2x2_batch(deconv_3_1, pool_2_argmax, tf.shape(conv_2_2))
+            unpool_2 = self.unpool_layer2x2_batch(deconv_3_1, pool_2_argmax)
 
             deconv_2_2 = self.deconv_layer(unpool_2, [3, 3, 128, 128], 128, 'deconv_2_2')
             deconv_2_1 = self.deconv_layer(deconv_2_2, [3, 3, 64, 128], 64, 'deconv_2_1')
 
-            unpool_1 = self.unpool_layer2x2_batch(deconv_2_1, pool_1_argmax, tf.shape(conv_1_2))
+            #unpool_1 = self.unpool_layer2x2_batch(deconv_2_1, pool_1_argmax, tf.shape(conv_1_2))
+            unpool_1 = self.unpool_layer2x2_batch(deconv_2_1, pool_1_argmax)
 
             deconv_1_2 = self.deconv_layer(unpool_1, [3, 3, 64, 64], 64, 'deconv_1_2')
             deconv_1_1 = self.deconv_layer(deconv_1_2, [3, 3, 32, 64], 32, 'deconv_1_1')
@@ -219,49 +238,39 @@ class DeconvNet:
         delta = tf.SparseTensor(indices, values, tf.to_int64(tf.shape(output)))
         return tf.expand_dims(tf.sparse_tensor_to_dense(tf.sparse_reorder(delta)), 0)
 
-    def unpool_layer2x2_batch(self, x, argmax, out_shape):
-        '''
-        Args:
-            x: 4D tensor of shape [batch_size x height x width x channels]
-            argmax: A Tensor of type Targmax. 4-D. The flattened indices of the max
-            values chosen for each output.
-        Return:
-            4D output tensor of shape [batch_size x 2*height x 2*width x channels]
-        '''
-        x_shape = tf.shape(x)
-        output = tf.zeros([out_shape[0],out_shape[1],out_shape[2],out_shape[3]])
+    def unpool_layer2x2_batch(self, bottom, argmax):
+        bottom_shape = tf.shape(bottom)
+        top_shape = [bottom_shape[0], bottom_shape[1] * 2, bottom_shape[2] * 2, bottom_shape[3]]
 
-        batch_size = out_shape[0]
-        height = out_shape[1]
-        width = out_shape[2]
-        channels = out_shape[3]
+        batch_size = top_shape[0]
+        height = top_shape[1]
+        width = top_shape[2]
+        channels = top_shape[3]
 
         argmax_shape = tf.to_int64([batch_size, height, width, channels])
         argmax = self.unravel_argmax(argmax, argmax_shape)
 
         t1 = tf.to_int64(tf.range(channels))
-        t1 = tf.tile(t1, [batch_size*(width//2)*(height//2)])
+        t1 = tf.tile(t1, [batch_size * (width // 2) * (height // 2)])
         t1 = tf.reshape(t1, [-1, channels])
         t1 = tf.transpose(t1, perm=[1, 0])
-        t1 = tf.reshape(t1, [channels, batch_size, height//2, width//2, 1])
+        t1 = tf.reshape(t1, [channels, batch_size, height // 2, width // 2, 1])
         t1 = tf.transpose(t1, perm=[1, 0, 2, 3, 4])
 
         t2 = tf.to_int64(tf.range(batch_size))
-        t2 = tf.tile(t2, [channels*(width//2)*(height//2)])
+        t2 = tf.tile(t2, [channels * (width // 2) * (height // 2)])
         t2 = tf.reshape(t2, [-1, batch_size])
         t2 = tf.transpose(t2, perm=[1, 0])
-        t2 = tf.reshape(t2, [batch_size, channels, height//2, width//2, 1])
+        t2 = tf.reshape(t2, [batch_size, channels, height // 2, width // 2, 1])
 
         t3 = tf.transpose(argmax, perm=[1, 4, 2, 3, 0])
 
         t = tf.concat(4, [t2, t3, t1])
-        indices = tf.reshape(t, [(height//2)*(width//2)*channels*batch_size, 4])
+        indices = tf.reshape(t, [(height // 2) * (width // 2) * channels * batch_size, 4])
 
-        x1 = tf.transpose(x, perm=[0, 3, 1, 2])
+        x1 = tf.transpose(bottom, perm=[0, 3, 1, 2])
         values = tf.reshape(x1, [-1])
-
-        delta = tf.SparseTensor(indices, values, tf.to_int64(out_shape))
-        return tf.sparse_tensor_to_dense(tf.sparse_reorder(delta))
+        return tf.scatter_nd(indices, values, tf.to_int64(top_shape))
 
 if __name__ == '__main__':
 
