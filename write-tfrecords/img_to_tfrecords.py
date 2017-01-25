@@ -39,6 +39,7 @@ if __name__ == '__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--imgpath',help="path to images",default="data/VOC_OBJECT/dataset_multlabel/images/")
     parser.add_argument('--segpath',help="path to segmentations",default="data/VOC_OBJECT/dataset_multlabel/segmentations/")
+    parser.add_argument('--outpath',help="path to write tfrecord",default="tfrecords/")
     parser.add_argument('--rec',help="tfrecord file name to write",default="pascalvoc2012")
     parser.add_argument('--crop',help="should we crop/pad images to fixed size?",default="y")
     args=parser.parse_args()
@@ -57,13 +58,14 @@ if __name__ == '__main__':
         myImg = tf.image.resize_image_with_crop_or_pad(myImg, 224, 224)
         mySeg = tf.image.resize_image_with_crop_or_pad(mySeg, 224, 224)
 
-    init=tf.initialize_all_variables()
+    #init=tf.initialize_all_variables()
+    init_global = tf.global_variables_initializer() # v0.12
 
     with tf.Session() as sess:
 
-        filename=os.path.join('tfrecords/'+args.rec+'.tfrecords')
+        filename=os.path.join(args.outpath+args.rec+'.tfrecords')
         print('Writing', filename)
-        sess.run(init)
+        sess.run(init_global)
         coord=tf.train.Coordinator()
         threads=tf.train.start_queue_runners(coord=coord)
         writer=tf.python_io.TFRecordWriter(filename)
