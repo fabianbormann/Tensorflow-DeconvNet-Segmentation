@@ -1,4 +1,4 @@
-trimport os
+import os
 import random
 import tensorflow as tf
 import time
