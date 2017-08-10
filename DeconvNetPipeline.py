@@ -199,7 +199,7 @@ class DeconvNet:
         b = self.bias_variable([b_shape])
 
         x_shape = tf.shape(x)
-        out_shape = tf.pack([x_shape[0], x_shape[1], x_shape[2], W_shape[2]])
+        out_shape = tf.stack([x_shape[0], x_shape[1], x_shape[2], W_shape[2]])
 
         return tf.nn.conv2d_transpose(x, W, out_shape, [1, 1, 1, 1], padding=padding) + b
 
@@ -207,7 +207,7 @@ class DeconvNet:
         output_list = []
         output_list.append(argmax // (shape[2] * shape[3]))
         output_list.append(argmax % (shape[2] * shape[3]) // shape[3])
-        return tf.pack(output_list)
+        return tf.stack(output_list)
 
     def unpool_layer2x2(self, x, raveled_argmax, out_shape):
         argmax = self.unravel_argmax(raveled_argmax, tf.to_int64(out_shape))
@@ -224,10 +224,10 @@ class DeconvNet:
         t1 = tf.reshape(t1, [channels, (height + 1) // 2, (width + 1) // 2, 1])
 
         t2 = tf.squeeze(argmax)
-        t2 = tf.pack((t2[0], t2[1]), axis=0)
+        t2 = tf.stack((t2[0], t2[1]), axis=0)
         t2 = tf.transpose(t2, perm=[3, 1, 2, 0])
 
-        t = tf.concat(3, [t2, t1])
+        t = tf.concat([t2, t1], 3)
         indices = tf.reshape(t, [((height + 1) // 2) * ((width + 1) // 2) * channels, 3])
 
         x1 = tf.squeeze(x)
@@ -265,7 +265,7 @@ class DeconvNet:
 
         t3 = tf.transpose(argmax, perm=[1, 4, 2, 3, 0])
 
-        t = tf.concat(4, [t2, t3, t1])
+        t = tf.concat([t2, t3, t1], 4)
         indices = tf.reshape(t, [(height // 2) * (width // 2) * channels * batch_size, 4])
 
         x1 = tf.transpose(bottom, perm=[0, 3, 1, 2])
@@ -292,8 +292,8 @@ if __name__ == '__main__':
 
     logits=deconvnet.logits
 
-    cross_entropy=tf.nn.sparse_softmax_cross_entropy_with_logits(logits, \
-        tf.cast(tf.reshape(deconvnet.y, [-1]), tf.int64), name='x_entropy')
+    cross_entropy=tf.nn.sparse_softmax_cross_entropy_with_logits(labels=tf.cast(tf.reshape(deconvnet.y, [-1]), tf.int64), logits=logits,
+        , name='x_entropy')
     
     loss_mean=tf.reduce_mean(cross_entropy, name='x_entropy_mean')
 
