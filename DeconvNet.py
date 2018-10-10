@@ -1,25 +1,77 @@
+import tensorflow as tf
+
+from tensorflow.keras import Model, Input
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Conv2DTranspose, Lambda, Layer, BatchNormalization, Activation
+from tensorflow.keras import backend as K
+from tensorflow.keras.models import load_model, save_model
+from tensorflow.keras.applications import VGG16
+
 import os
 import random
-import tensorflow as tf
 import time
 import wget
 import tarfile
 import numpy as np
 import cv2
 
+class MaxUnpoolWithArgmax(Layer):
+
+    def __init__(self, pooling_argmax, stride = [1, 2, 2, 1], **kwargs):
+        self.pooling_argmax = pooling_argmax    
+        self.stride = stride
+        super(MaxUnpoolWithArgmax, self).__init__(**kwargs)
+        
+    def build(self, input_shape):
+        super(MaxUnpoolWithArgmax, self).build(input_shape)
+
+    def call(self, inputs):
+        input_shape = K.cast(K.shape(inputs), dtype='int64')
+
+        output_shape = (input_shape[0],
+                        input_shape[1] * self.stride[1],
+                        input_shape[2] * self.stride[2],
+                        input_shape[3])
+
+        #output_list = []
+        #output_list.append(self.pooling_argmax // (output_shape[2] * output_shape[3]))
+        #output_list.append(self.pooling_argmax % (output_shape[2] * output_shape[3]) // output_shape[3])
+        argmax = self.pooling_argmax #K.stack(output_list)
+
+        one_like_mask = K.ones_like(argmax)
+        batch_range = K.reshape(K.arange(start=0, stop=input_shape[0], dtype='int64'), 
+                                 shape=[input_shape[0], 1, 1, 1])
+
+        b = one_like_mask * batch_range
+        y = argmax // (output_shape[2] * output_shape[3])
+        x = argmax % (output_shape[2] * output_shape[3]) // output_shape[3]
+        feature_range = K.arange(start=0, stop=output_shape[3], dtype='int64')
+        f = one_like_mask * feature_range
+        # transpose indices & reshape update values to one dimension
+        updates_size = tf.size(inputs)
+        indices = K.transpose(K.reshape(K.stack([b, y, x, f]), [4, updates_size]))
+        values = K.reshape(inputs, [updates_size])
+        return tf.scatter_nd(indices, values, output_shape)
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], input_shape[1] * 2, input_shape[2] * 2, input_shape[3])
+
+    def get_config(self):
+        base_config = super(MaxUnpoolWithArgmax, self).get_config()
+        base_config['pooling_argmax'] = self.pooling_argmax
+        base_config['stride'] = self.stride
+        return base_config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
 
 class DeconvNet:
-    def __init__(self, use_cpu=False, checkpoint_dir='./checkpoints/'):
+    def __init__(self, use_cpu=False, print_summary=False):
         self.maybe_download_and_extract()
+        self.build(use_cpu=use_cpu, print_summary=print_summary)
 
-        self.build(use_cpu=use_cpu)
-
-        self.saver = tf.train.Saver(max_to_keep = 5, keep_checkpoint_every_n_hours =1)
-        config = tf.ConfigProto(allow_soft_placement = True)
-        self.session = tf.Session(config = config)
-        self.session.run(tf.global_variables_initializer())
-        self.checkpoint_dir = checkpoint_dir
-
+        
     def maybe_download_and_extract(self):
         """Download and unpack VOC data if data folder only contains the .gitignore file"""
         if os.listdir('data') == ['.gitignore']:
@@ -35,252 +87,212 @@ class DeconvNet:
 
                 os.remove(os.path.join('data', filename))
 
-    def restore_session():
-        global_step = 0
-        if not os.path.exists(self.checkpoint_dir):
-            raise IOError(self.checkpoint_dir + ' does not exist.')
-        else:
-            path = tf.train.get_checkpoint_state(self.checkpoint_dir)
-            if path is None:
-                raise IOError('No checkpoint to restore in ' + self.checkpoint_dir)
-            else:
-                self.saver.restore(self.session, path.model_checkpoint_path)
-                global_step = int(path.model_checkpoint_path.split('-')[-1])
-
-        return global_step
-
-
+                
     def predict(self, image):
-        restore_session()
-        return self.prediction.eval(session=self.session, feed_dict={image: [image]})[0]
+        return self.model.predict(np.array([image]))
+    
+    def save(self, file_path='model.h5'):
+        print(self.model.to_json())
+        self.model.save_weights(file_path)
+        
+    def load(self, file_path='model.h5'):
+        self.model.load_weights(file_path)
+    
+    def random_crop_or_pad(self, image, truth, size=(224, 224)):
+        assert image.shape[:2] == truth.shape[:2]
 
-
-    def train(self, train_stage=1, training_steps=5, restore_session=False, learning_rate=1e-6):
-        if restore_session:
-            step_start = restore_session()
+        if image.shape[0] > size[0]:
+            crop_random_y = random.randint(0, image.shape[0] - size[0])
+            image = image[crop_random_y:crop_random_y + size[0],:,:]
+            truth = truth[crop_random_y:crop_random_y + size[0],:]
         else:
-            step_start = 0
+            zeros = np.zeros((size[0], image.shape[1], image.shape[2]), dtype=np.float32)
+            zeros[:image.shape[0], :image.shape[1], :] = image                                          
+            image = np.copy(zeros)
+            zeros = np.zeros((size[0], truth.shape[1]), dtype=np.float32)
+            zeros[:truth.shape[0], :truth.shape[1]] = truth
+            truth = np.copy(zeros)
 
+        if image.shape[1] > size[1]:
+            crop_random_x = random.randint(0, image.shape[1] - size[1])
+            image = image[:,crop_random_x:crop_random_x + 224,:]
+            truth = truth[:,crop_random_x:crop_random_x + 224]
+        else:
+            zeros = np.zeros((image.shape[0], size[1], image.shape[2]))
+            zeros[:image.shape[0], :image.shape[1], :] = image
+            image = np.copy(zeros)
+            zeros = np.zeros((truth.shape[0], size[1]))
+            zeros[:truth.shape[0], :truth.shape[1]] = truth
+            truth = np.copy(zeros)            
+
+        return image, truth
+
+    #(0=background, 1=aeroplane, 2=bicycle, 3=bird, 4=boat, 5=bottle, 6=bus, 7=car , 8=cat, 9=chair, 
+    # 10=cow, 11=diningtable, 12=dog, 13=horse, 14=motorbike, 15=person, 16=potted plant, 
+    # 17=sheep, 18=sofa, 19=train, 20=tv/monitor, 255=no_label)
+
+    def max_pool_with_argmax(self, x):
+        return tf.nn.max_pool_with_argmax(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+    
+    def BatchGenerator(self, train_stage=1, batch_size=8, image_size=(224, 224, 3), labels=21):
         if train_stage == 1:
             trainset = open('data/stage_1_train_imgset/train.txt').readlines()
         else:
             trainset = open('data/stage_2_train_imgset/train.txt').readlines()
 
-        for i in range(step_start, step_start+training_steps):
-            # pick random line from file
-            random_line = random.choice(trainset)
-            image_file = random_line.split(' ')[0]
-            ground_truth_file = random_line.split(' ')[1]
-            image = np.float32(cv2.imread('data' + image_file))
-            ground_truth = cv2.imread('data' + ground_truth_file[:-1], cv2.IMREAD_GRAYSCALE)
-            # norm to 21 classes [0-20] (see paper)
-            ground_truth = (ground_truth / 255) * 20
-            print('run train step: '+str(i))
-            start = time.time()
-            self.train_step.run(session=self.session, feed_dict={self.x: [image], self.y: [ground_truth], self.rate: learning_rate})
+        while True:
+            images = np.zeros((batch_size, image_size[0], image_size[1], image_size[2]))
+            truths = np.zeros((batch_size, image_size[0], image_size[1], labels))
 
-            if i % 10000 == 0:
-                print('step {} finished in {:.2f} s with loss of {:.6f}'.format(
-                    i, time.time() - start, self.loss.eval(session=self.session, feed_dict={self.x: [image], self.y: [ground_truth]})))
-                self.saver.save(self.session, self.checkpoint_dir+'model', global_step=i)
-                print('Model {} saved'.format(i))
+            for i in range(batch_size):
+                random_line = random.choice(trainset)
+                image_file = random_line.split(' ')[0]
+                truth_file = random_line.split(' ')[1]
+                image = np.float32(cv2.imread('data' + image_file)/255.0)
 
-    def build(self, use_cpu=False):
-        '''
-        use_cpu allows you to test or train the network even with low GPU memory
-        anyway: currently there is no tensorflow CPU support for unpooling respectively
-        for the tf.nn.max_pool_with_argmax metod so that GPU support is needed for training
-        and prediction
-        '''
+                truth_mask = cv2.imread('data' + truth_file[:-1], cv2.IMREAD_GRAYSCALE)
+                truth_mask[truth_mask == 255] = 0 # replace no_label with background  
+                images[i], truth = self.random_crop_or_pad(image, truth_mask, image_size)
+                truths[i] = (np.arange(labels) == truth[...,None]-1).astype(int) # encode to one-hot-vector
+            yield images, truths
+            
 
+    def train(self, steps_per_epoch=1000, epochs=10, batch_size=32):
+        batch_generator = self.BatchGenerator(batch_size=batch_size)
+        self.model.fit_generator(batch_generator, steps_per_epoch=steps_per_epoch, epochs=epochs)
+
+    def buildConv2DBlock(self, block_input, filters, block, depth):
+        for i in range(1, depth + 1):
+            if i == 1:
+                conv2d = Conv2D(filters, 3, padding='same', name='conv{}-{}'.format(block, i), use_bias=False)(block_input)
+            else:
+                conv2d = Conv2D(filters, 3, padding='same', name='conv{}-{}'.format(block, i), use_bias=False)(conv2d)
+            
+            conv2d = BatchNormalization(name='batchnorm{}-{}'.format(block, i))(conv2d)
+            conv2d = Activation('relu', name='relu{}-{}'.format(block, i))(conv2d)
+            
+        return conv2d
+        
+    def build(self, use_cpu=False, print_summary=False):
+        vgg16 = VGG16(weights = "imagenet", include_top=False, input_shape = (224, 224, 3))
+        
         if use_cpu:
             device = '/cpu:0'
         else:
             device = '/gpu:0'
 
         with tf.device(device):
-            self.x = tf.placeholder(tf.float32, shape=(1, None, None, 3))
-            self.y = tf.placeholder(tf.int64, shape=(1, None, None))
-            expected = tf.expand_dims(self.y, -1)
-            self.rate = tf.placeholder(tf.float32, shape=[])
+            inputs = Input(shape=(224, 224, 3))
 
-            conv_1_1 = self.conv_layer(self.x, [3, 3, 3, 64], 64, 'conv_1_1')
-            conv_1_2 = self.conv_layer(conv_1_1, [3, 3, 64, 64], 64, 'conv_1_2')
+            conv_block_1 = self.buildConv2DBlock(inputs, 64, 1, 2)
+            pool1, pool1_argmax = Lambda(self.max_pool_with_argmax, name='pool1')(conv_block_1) 
 
-            pool_1, pool_1_argmax = self.pool_layer(conv_1_2)
+            conv_block_2 = self.buildConv2DBlock(pool1, 128, 2, 2)
+            pool2, pool2_argmax = Lambda(self.max_pool_with_argmax, name='pool2')(conv_block_2) 
 
-            conv_2_1 = self.conv_layer(pool_1, [3, 3, 64, 128], 128, 'conv_2_1')
-            conv_2_2 = self.conv_layer(conv_2_1, [3, 3, 128, 128], 128, 'conv_2_2')
+            conv_block_3 = self.buildConv2DBlock(pool2, 256, 3, 3)
+            pool3, pool3_argmax = Lambda(self.max_pool_with_argmax, name='pool3')(conv_block_3) 
 
-            pool_2, pool_2_argmax = self.pool_layer(conv_2_2)
+            conv_block_4 = self.buildConv2DBlock(pool3, 512, 4, 3)
+            pool4, pool4_argmax = Lambda(self.max_pool_with_argmax, name='pool4')(conv_block_4) 
 
-            conv_3_1 = self.conv_layer(pool_2, [3, 3, 128, 256], 256, 'conv_3_1')
-            conv_3_2 = self.conv_layer(conv_3_1, [3, 3, 256, 256], 256, 'conv_3_2')
-            conv_3_3 = self.conv_layer(conv_3_2, [3, 3, 256, 256], 256, 'conv_3_3')
+            conv_block_5 = self.buildConv2DBlock(pool4, 512, 5, 3)
+            pool5, pool5_argmax = Lambda(self.max_pool_with_argmax, name='pool5')(conv_block_5)
 
-            pool_3, pool_3_argmax = self.pool_layer(conv_3_3)
+            fc6 = Conv2D(512, 7, use_bias=False, padding='valid', name='fc6')(pool5) #4096
+            fc6 = BatchNormalization(name='batchnorm_fc6')(fc6)
+            fc6 = Activation('relu', name='relu_fc6')(fc6)
+            
+            fc7 = Conv2D(512, 1, use_bias=False, padding='valid', name='fc7')(fc6)   #4096
+            fc7 = BatchNormalization(name='batchnorm_fc7')(fc7)
+            fc7 = Activation('relu', name='relu_fc7')(fc7)
+            
+            x = Conv2DTranspose(512, 7, use_bias=False, padding='valid', name='deconv-fc6')(fc7)
+            x = BatchNormalization(name='batchnorm_deconv-fc6')(x)
+            x = Activation('relu', name='relu_deconv-fc6')(x)            
+            x = MaxUnpoolWithArgmax(pool5_argmax, name='unpool5')(x)
+            x.set_shape(conv_block_5.get_shape())
 
-            conv_4_1 = self.conv_layer(pool_3, [3, 3, 256, 512], 512, 'conv_4_1')
-            conv_4_2 = self.conv_layer(conv_4_1, [3, 3, 512, 512], 512, 'conv_4_2')
-            conv_4_3 = self.conv_layer(conv_4_2, [3, 3, 512, 512], 512, 'conv_4_3')
+            x = Conv2DTranspose(512, 3, use_bias=False, padding='same', name='deconv5-1')(x)
+            x = BatchNormalization(name='batchnorm_deconv5-1')(x)
+            x = Activation('relu', name='relu_deconv5-1')(x)  
+            
+            x = Conv2DTranspose(512, 3, use_bias=False, padding='same', name='deconv5-2')(x)
+            x = BatchNormalization(name='batchnorm_deconv5-2')(x)
+            x = Activation('relu', name='relu_deconv5-2')(x)  
+            
+            x = Conv2DTranspose(512, 3, use_bias=False, padding='same', name='deconv5-3')(x)
+            x = BatchNormalization(name='batchnorm_deconv5-3')(x)
+            x = Activation('relu', name='relu_deconv5-3')(x)  
+            
+            x = MaxUnpoolWithArgmax(pool4_argmax, name='unpool4')(x)
+            x.set_shape(conv_block_4.get_shape())
 
-            pool_4, pool_4_argmax = self.pool_layer(conv_4_3)
+            x = Conv2DTranspose(512, 3, use_bias=False, padding='same', name='deconv4-1')(x)
+            x = BatchNormalization(name='batchnorm_deconv4-1')(x)
+            x = Activation('relu', name='relu_deconv4-1')(x)  
+            
+            x = Conv2DTranspose(512, 3, use_bias=False, padding='same', name='deconv4-2')(x)
+            x = BatchNormalization(name='batchnorm_deconv4-2')(x)
+            x = Activation('relu', name='relu_deconv4-2')(x)  
+            
+            x = Conv2DTranspose(256, 3, use_bias=False, padding='same', name='deconv4-3')(x)
+            x = BatchNormalization(name='batchnorm_deconv4-3')(x)
+            x = Activation('relu', name='relu_deconv4-3')(x)  
+            
+            x = MaxUnpoolWithArgmax(pool3_argmax, name='unpool3')(x)
+            x.set_shape(conv_block_3.get_shape())
 
-            conv_5_1 = self.conv_layer(pool_4, [3, 3, 512, 512], 512, 'conv_5_1')
-            conv_5_2 = self.conv_layer(conv_5_1, [3, 3, 512, 512], 512, 'conv_5_2')
-            conv_5_3 = self.conv_layer(conv_5_2, [3, 3, 512, 512], 512, 'conv_5_3')
+            x = Conv2DTranspose(256, 3, use_bias=False, padding='same', name='deconv3-1')(x)
+            x = BatchNormalization(name='batchnorm_deconv3-1')(x)
+            x = Activation('relu', name='relu_deconv3-1')(x)  
+            
+            x = Conv2DTranspose(256, 3, use_bias=False, padding='same', name='deconv3-2')(x)
+            x = BatchNormalization(name='batchnorm_deconv3-2')(x)
+            x = Activation('relu', name='relu_deconv3-2')(x)  
+            
+            x = Conv2DTranspose(128, 3, use_bias=False, padding='same', name='deconv3-3')(x)
+            x = BatchNormalization(name='batchnorm_deconv3-3')(x)
+            x = Activation('relu', name='relu_deconv3-3')(x)  
+            
+            x = MaxUnpoolWithArgmax(pool2_argmax, name='unpool2')(x)
+            x.set_shape(conv_block_2.get_shape())
 
-            pool_5, pool_5_argmax = self.pool_layer(conv_5_3)
+            x = Conv2DTranspose(128, 3, use_bias=False, padding='same', name='deconv2-1')(x)
+            x = BatchNormalization(name='batchnorm_deconv2-1')(x)
+            x = Activation('relu', name='relu_deconv2-1')(x)  
+            
+            x = Conv2DTranspose(64, 3, use_bias=False, padding='same', name='deconv2-2')(x)
+            x = BatchNormalization(name='batchnorm_deconv2-2')(x)
+            x = Activation('relu', name='relu_deconv2-2')(x)  
+            
+            x = MaxUnpoolWithArgmax(pool1_argmax, name='unpool1')(x)
+            x.set_shape(conv_block_1.get_shape())
 
-            fc_6 = self.conv_layer(pool_5, [7, 7, 512, 4096], 4096, 'fc_6')
-            fc_7 = self.conv_layer(fc_6, [1, 1, 4096, 4096], 4096, 'fc_7')
+            x = Conv2DTranspose(64, 3, use_bias=False, padding='same', name='deconv1-1')(x)
+            x = BatchNormalization(name='batchnorm_deconv1-1')(x)
+            x = Activation('relu', name='relu_deconv1-1')(x)  
+            
+            x = Conv2DTranspose(64, 3, use_bias=False, padding='same', name='deconv1-2')(x)
+            x = BatchNormalization(name='batchnorm_deconv1-2')(x)
+            x = Activation('relu', name='relu_deconv1-2')(x)              
+            
+            output = Conv2DTranspose(21, 1, activation='softmax', padding='same', name='output')(x)
 
-            deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 512, 'fc6_deconv')
-
-            unpool_5 = self.unpool_layer2x2(deconv_fc_6, pool_5_argmax, tf.shape(conv_5_3))
-
-            deconv_5_3 = self.deconv_layer(unpool_5, [3, 3, 512, 512], 512, 'deconv_5_3')
-            deconv_5_2 = self.deconv_layer(deconv_5_3, [3, 3, 512, 512], 512, 'deconv_5_2')
-            deconv_5_1 = self.deconv_layer(deconv_5_2, [3, 3, 512, 512], 512, 'deconv_5_1')
-
-            unpool_4 = self.unpool_layer2x2(deconv_5_1, pool_4_argmax, tf.shape(conv_4_3))
-
-            deconv_4_3 = self.deconv_layer(unpool_4, [3, 3, 512, 512], 512, 'deconv_4_3')
-            deconv_4_2 = self.deconv_layer(deconv_4_3, [3, 3, 512, 512], 512, 'deconv_4_2')
-            deconv_4_1 = self.deconv_layer(deconv_4_2, [3, 3, 256, 512], 256, 'deconv_4_1')
-
-            unpool_3 = self.unpool_layer2x2(deconv_4_1, pool_3_argmax, tf.shape(conv_3_3))
-
-            deconv_3_3 = self.deconv_layer(unpool_3, [3, 3, 256, 256], 256, 'deconv_3_3')
-            deconv_3_2 = self.deconv_layer(deconv_3_3, [3, 3, 256, 256], 256, 'deconv_3_2')
-            deconv_3_1 = self.deconv_layer(deconv_3_2, [3, 3, 128, 256], 128, 'deconv_3_1')
-
-            unpool_2 = self.unpool_layer2x2(deconv_3_1, pool_2_argmax, tf.shape(conv_2_2))
-
-            deconv_2_2 = self.deconv_layer(unpool_2, [3, 3, 128, 128], 128, 'deconv_2_2')
-            deconv_2_1 = self.deconv_layer(deconv_2_2, [3, 3, 64, 128], 64, 'deconv_2_1')
-
-            unpool_1 = self.unpool_layer2x2(deconv_2_1, pool_1_argmax, tf.shape(conv_1_2))
-
-            deconv_1_2 = self.deconv_layer(unpool_1, [3, 3, 64, 64], 64, 'deconv_1_2')
-            deconv_1_1 = self.deconv_layer(deconv_1_2, [3, 3, 32, 64], 32, 'deconv_1_1')
-
-            score_1 = self.deconv_layer(deconv_1_1, [1, 1, 21, 32], 21, 'score_1')
-
-            logits = tf.reshape(score_1, (-1, 21))
-            cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=tf.reshape(expected, [-1]), logits=logits, name='x_entropy')
-            self.loss = tf.reduce_mean(cross_entropy, name='x_entropy_mean')
-
-            self.train_step = tf.train.AdamOptimizer(self.rate).minimize(self.loss)
-
-            self.prediction = tf.argmax(tf.reshape(tf.nn.softmax(logits), tf.shape(score_1)), dimension=3)
-            self.accuracy = tf.reduce_sum(tf.pow(self.prediction - expected, 2))
-
-    def weight_variable(self, shape):
-        initial = tf.truncated_normal(shape, stddev=0.1)
-        return tf.Variable(initial)
-
-    def bias_variable(self, shape):
-        initial = tf.constant(0.1, shape=shape)
-        return tf.Variable(initial)
-
-    def conv_layer(self, x, W_shape, b_shape, name, padding='SAME'):
-        W = self.weight_variable(W_shape)
-        b = self.bias_variable([b_shape])
-        return tf.nn.relu(tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding=padding) + b)
-
-    def pool_layer(self, x):
-        '''
-        see description of build method
-        '''
-        with tf.device('/gpu:0'):
-            return tf.nn.max_pool_with_argmax(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
-
-
-    def deconv_layer(self, x, W_shape, b_shape, name, padding='SAME'):
-        W = self.weight_variable(W_shape)
-        b = self.bias_variable([b_shape])
-
-        x_shape = tf.shape(x)
-        out_shape = tf.stack([x_shape[0], x_shape[1], x_shape[2], W_shape[2]])
-
-        return tf.nn.conv2d_transpose(x, W, out_shape, [1, 1, 1, 1], padding=padding) + b
-
-    def unravel_argmax(self, argmax, shape):
-        output_list = []
-        output_list.append(argmax // (shape[2] * shape[3]))
-        output_list.append(argmax % (shape[2] * shape[3]) // shape[3])
-        return tf.stack(output_list)
-
-    def unpool_layer2x2(self, x, raveled_argmax, out_shape):
-        argmax = self.unravel_argmax(raveled_argmax, tf.to_int64(out_shape))
-        output = tf.zeros([out_shape[1], out_shape[2], out_shape[3]])
-
-        height = tf.shape(output)[0]
-        width = tf.shape(output)[1]
-        channels = tf.shape(output)[2]
-
-        t1 = tf.to_int64(tf.range(channels))
-        t1 = tf.tile(t1, [((width + 1) // 2) * ((height + 1) // 2)])
-        t1 = tf.reshape(t1, [-1, channels])
-        t1 = tf.transpose(t1, perm=[1, 0])
-        t1 = tf.reshape(t1, [channels, (height + 1) // 2, (width + 1) // 2, 1])
-
-        t2 = tf.squeeze(argmax)
-        t2 = tf.stack((t2[0], t2[1]), axis=0)
-        t2 = tf.transpose(t2, perm=[3, 1, 2, 0])
-
-        t = tf.concat([t2, t1], 3)
-        indices = tf.reshape(t, [((height + 1) // 2) * ((width + 1) // 2) * channels, 3])
-
-        x1 = tf.squeeze(x)
-        x1 = tf.reshape(x1, [-1, channels])
-        x1 = tf.transpose(x1, perm=[1, 0])
-        values = tf.reshape(x1, [-1])
-
-        delta = tf.SparseTensor(indices, values, tf.to_int64(tf.shape(output)))
-        return tf.expand_dims(tf.sparse_tensor_to_dense(tf.sparse_reorder(delta)), 0)
-
-    def unpool_layer2x2_batch(self, x, argmax):
-        '''
-        Args:
-            x: 4D tensor of shape [batch_size x height x width x channels]
-            argmax: A Tensor of type Targmax. 4-D. The flattened indices of the max
-            values chosen for each output.
-        Return:
-            4D output tensor of shape [batch_size x 2*height x 2*width x channels]
-        '''
-        x_shape = tf.shape(x)
-        out_shape = [x_shape[0], x_shape[1]*2, x_shape[2]*2, x_shape[3]]
-
-        batch_size = out_shape[0]
-        height = out_shape[1]
-        width = out_shape[2]
-        channels = out_shape[3]
-
-        argmax_shape = tf.to_int64([batch_size, height, width, channels])
-        argmax = unravel_argmax(argmax, argmax_shape)
-
-        t1 = tf.to_int64(tf.range(channels))
-        t1 = tf.tile(t1, [batch_size*(width//2)*(height//2)])
-        t1 = tf.reshape(t1, [-1, channels])
-        t1 = tf.transpose(t1, perm=[1, 0])
-        t1 = tf.reshape(t1, [channels, batch_size, height//2, width//2, 1])
-        t1 = tf.transpose(t1, perm=[1, 0, 2, 3, 4])
-
-        t2 = tf.to_int64(tf.range(batch_size))
-        t2 = tf.tile(t2, [channels*(width//2)*(height//2)])
-        t2 = tf.reshape(t2, [-1, batch_size])
-        t2 = tf.transpose(t2, perm=[1, 0])
-        t2 = tf.reshape(t2, [batch_size, channels, height//2, width//2, 1])
-
-        t3 = tf.transpose(argmax, perm=[1, 4, 2, 3, 0])
-
-        t = tf.concat([t2, t3, t1], 4)
-        indices = tf.reshape(t, [(height//2)*(width//2)*channels*batch_size, 4])
-
-        x1 = tf.transpose(x, perm=[0, 3, 1, 2])
-        values = tf.reshape(x1, [-1])
-
-        delta = tf.SparseTensor(indices, values, tf.to_int64(out_shape))
-        return tf.sparse_tensor_to_dense(tf.sparse_reorder(delta))
+            self.model = Model(inputs=inputs, outputs=output)
+            vgg16 = VGG16(weights = "imagenet", include_top=False, input_shape = (224, 224, 3))
+            
+            if print_summary:
+                print(self.model.summary())
+            
+            for layer in self.model.layers:
+                if layer.name.startswith('conv'):
+                    block = layer.name[4:].split('-')[0]
+                    depth = layer.name[4:].split('-')[1]
+                    # apply vgg16 weights without bias
+                    layer.set_weights([vgg16.get_layer('block{}_conv{}'.format(block, depth)).get_weights()[0]])
+            
+            
+            self.model.compile(optimizer='adam',
+                          loss='categorical_crossentropy',
+                          metrics=['accuracy', 'mse'])

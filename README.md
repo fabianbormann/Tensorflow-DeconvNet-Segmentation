@@ -1,7 +1,7 @@
 Tensorflow implementation of [Learning Deconvolution Network for Semantic Segmentation](http://arxiv.org/pdf/1505.04366v1.pdf).
 ## Install Instructions
 
-1. Get a [Tensorflow version](https://www.tensorflow.org/versions/r0.12/get_started/os_setup.html#pip-installation) that fits to your system
+1. Works with tensorflow 1.11.0 and uses the Keras API so use pip to install tensorflow-gpu in the latest version
 
 2. Run the following commands in your terminal
 
@@ -19,18 +19,9 @@ Python 3.5.2+ (default, Sep 22 2016, 12:18:14)
 Type "help", "copyright", "credits" or "license" for more information.
 >>> from DeconvNet import DeconvNet
 >>> deconvNet = DeconvNet() # will start collecting the VOC2012 data
+>>> deconvNet.train(epochs=20, steps_per_epoch=500, batch_size=64)
+>>> deconvNet.save()
+>>> prediction = deconvNet.predict(any_image)
 ```
 
-### Improving training
-`python write-tfrecords/img_to_records_pascal.py`
-
-Will write entire PASCAL VOC2012 dataset as TFRecord. Takes about 4mins @ 100it/s.
-
-Default behaviour:
-- assumes default dataset location from DeconvNet.py
-- writes TFRecord to `tfrecords` folder
-- Uses [resize_image_with_crop_or_pad](https://www.tensorflow.org/versions/r0.12/api_docs/python/image.html#resize_image_with_crop_or_pad) to make all images and segmentations fixed size of 224x224
-- run with `-h` to see help and change defaults, will need to change `decode_png` to use image format other than png.
-
---
 Contributions welcome!
